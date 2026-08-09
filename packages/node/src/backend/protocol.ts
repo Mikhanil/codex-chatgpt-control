@@ -110,11 +110,19 @@ export type BackendResponse<TResult = unknown> = BackendResponseOk<TResult> | Ba
 
 export type BackendCapabilities = {
   protocolVersion: typeof BACKEND_REQUEST_SCHEMA_VERSION;
+  packageVersion: string;
+  sessionId: string;
   commands: BackendCommand[];
   transports: Array<"stdio" | "http">;
   streaming: {
     modes: Array<"ndjson" | "sse">;
     tokenDeltas: false;
+  };
+  execution: {
+    browserCommands: "serialized_per_session";
+    correlation: "requestId";
+    tabAffinity: "enforced_after_bootstrap";
+    subagentRuntime: "bootstrap_per_agent";
   };
 };
 

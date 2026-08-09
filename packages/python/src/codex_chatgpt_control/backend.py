@@ -73,11 +73,13 @@ class StdioBackendTransport:
     _process: subprocess.Popen[str] | None = field(init=False, default=None)
     _stderr_buffer: str = field(init=False, default="")
     _stderr_lock: threading.Lock = field(init=False, default_factory=threading.Lock)
+    _exchange_lock: threading.Lock = field(init=False, default_factory=threading.Lock)
     _stderr_thread: threading.Thread | None = field(init=False, default=None)
 
     def request(self, request: dict[str, Any]) -> BackendResponse:
-        self._write_json_line(request)
-        response = self._read_response(request)
+        with self._exchange_lock:
+            self._write_json_line(request)
+            response = self._read_response(request)
         if response.get("ok") is False:
             error = response.get("error")
             if not isinstance(error, dict):
@@ -90,22 +92,23 @@ class StdioBackendTransport:
         return response
 
     def stream(self, request: dict[str, Any]) -> Iterator[BackendEvent]:
-        self._write_json_line(request)
-        while True:
-            event = self._read_event(request)
-            event_type = event.get("type")
-            if event_type == "error":
-                error = event.get("error")
-                if not isinstance(error, dict):
-                    raise BackendTransportError("Backend error event is missing error details.")
-                raise BackendProtocolError(
-                    str(error.get("code", "backend_error")),
-                    str(error.get("message", "Backend stream error.")),
-                    recoverable=bool(error.get("recoverable", False)),
-                )
-            yield event
-            if event_type == "completed":
-                return
+        with self._exchange_lock:
+            self._write_json_line(request)
+            while True:
+                event = self._read_event(request)
+                event_type = event.get("type")
+                if event_type == "error":
+                    error = event.get("error")
+                    if not isinstance(error, dict):
+                        raise BackendTransportError("Backend error event is missing error details.")
+                    raise BackendProtocolError(
+                        str(error.get("code", "backend_error")),
+                        str(error.get("message", "Backend stream error.")),
+                        recoverable=bool(error.get("recoverable", False)),
+                    )
+                yield event
+                if event_type == "completed":
+                    return
 
     def close(self) -> None:
         process = self._process
@@ -330,6 +333,12 @@ class BackendClient:
         result = self.request("backend.capabilities")
         if not isinstance(result, dict):
             raise BackendTransportError("backend.capabilities result must be a JSON object.")
+        return result
+
+    def version(self) -> dict[str, Any]:
+        result = self.request("backend.version")
+        if not isinstance(result, dict):
+            raise BackendTransportError("backend.version result must be a JSON object.")
         return result
 
     def health(self) -> dict[str, Any]:

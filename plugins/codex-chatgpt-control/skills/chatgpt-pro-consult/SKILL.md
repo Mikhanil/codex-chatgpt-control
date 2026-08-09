@@ -37,6 +37,8 @@ Do not force this staged protocol into ordinary short SDK calls. For normal `cha
 
 ## Runtime Loader
 
+Each agent or subagent must bootstrap and verify its own JavaScript/browser runtime. Never assume that another agent's globals, SDK client, browser/page handles, or tab claim are shared. Use the broad skill's runtime doctor handshake before the consult, keep one in-flight browser operation per claimed tab, and preserve backend `sessionId`/`requestId` plus the thread URL for recovery.
+
 Resolve relative paths from this `SKILL.md` directory. The plugin runtime loader lives at:
 
 ```text

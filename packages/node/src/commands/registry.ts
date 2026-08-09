@@ -73,7 +73,8 @@ const descriptors: CommandDescriptor[] = [
   report("redacted-run-report", "Named macro: create a redacted report for a supplied CommandResult.", [
     `await chatgpt.runPlan({ name: "redacted-run-report", input: { result } });`
   ]),
-  diagnostic("doctor", "Preflight browser bridge, login, upload, local files, existing-tab, artifact, localization, report, and selector readiness.", [
+  diagnostic("doctor", "Preflight runtime compatibility, browser bridge, login, upload, local files, existing-tab, artifact, localization, report, and selector readiness.", [
+    `await chatgpt.doctor({ check: ["runtime"], expectedPackageVersion: "0.5.1-alpha.1", expectedProtocolVersion: "chatgpt.browser_control.backend_request.v1" });`,
     `await chatgpt.doctor({ check: ["bridge", "login", "upload"] });`,
     `await chatgpt.doctor({ check: ["existing_tab"], existingTab: { target: { type: "conversationId", conversationId: "<conversation-id>" }, ifMissing: "block" } });`,
     `await chatgpt.doctor({ check: ["file_preflight"], files: ["/absolute/host/path.md"] });`,

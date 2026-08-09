@@ -3,8 +3,10 @@
   "requestId": "req_backend_version",
   "result": {
     "name": "codex-chatgpt-control-backend",
+    "packageVersion": "0.5.1-alpha.1",
     "protocolVersion": "chatgpt.browser_control.backend_request.v1",
-    "runtime": "node"
+    "runtime": "node",
+    "sessionId": "<backend-session-id>"
   },
   "schemaVersion": "chatgpt.browser_control.backend_response.v1"
 }

@@ -11,8 +11,11 @@ import type { BootstrapArgs, CommandResult, ExistingTabPolicy, RuntimeEnv } from
 import { contextFromPage } from "./context.js";
 import type { RunReportOptions } from "./reports.js";
 import { bootstrap } from "./session.js";
+import { BACKEND_REQUEST_SCHEMA_VERSION } from "../backend/protocol.js";
+import { PACKAGE_VERSION } from "../version.js";
 
 export type DoctorCheckName =
+  | "runtime"
   | "bridge"
   | "login"
   | "upload"
@@ -44,6 +47,8 @@ export type DoctorArgs = {
   existingTab?: BootstrapArgs["existingTab"];
   files?: string[];
   report?: RunReportOptions;
+  expectedPackageVersion?: string;
+  expectedProtocolVersion?: string;
 };
 
 export type DoctorReport = {
@@ -90,6 +95,9 @@ export async function doctor(env: RuntimeEnv, args: DoctorArgs = {}): Promise<Co
 
   for (const check of wanted) {
     switch (check) {
+      case "runtime":
+        checks.runtime = runtimeCheck(env, args);
+        break;
       case "bridge":
         checks.bridge = boot?.ok
           ? ok("Chrome bridge is available.")
@@ -138,6 +146,36 @@ export async function doctor(env: RuntimeEnv, args: DoctorArgs = {}): Promise<Co
 
   const ready = Object.values(checks).every(check => check?.status === "ok" || check?.status === "unknown");
   return resultOk({ ready, checks }, await contextFromPage(env.page));
+}
+
+function runtimeCheck(env: RuntimeEnv, args: DoctorArgs): CapabilityCheck {
+  const packageMatches = args.expectedPackageVersion === undefined || args.expectedPackageVersion === PACKAGE_VERSION;
+  const protocolMatches = args.expectedProtocolVersion === undefined || args.expectedProtocolVersion === BACKEND_REQUEST_SCHEMA_VERSION;
+  const details = {
+    packageVersion: PACKAGE_VERSION,
+    protocolVersion: BACKEND_REQUEST_SCHEMA_VERSION,
+    expectedPackageVersion: args.expectedPackageVersion,
+    expectedProtocolVersion: args.expectedProtocolVersion,
+    executionSurface: env.page !== undefined ? "page_injected" : env.agent !== undefined || env.browser !== undefined ? "bridge_host" : "ordinary_process",
+    agentPresent: env.agent !== undefined,
+    browserPresent: env.browser !== undefined,
+    pagePresent: env.page !== undefined,
+    bootstrapRequired: env.page === undefined,
+    browserCommands: "caller_serialized",
+    correlation: "backend_request_id",
+    tabAffinity: "enforced_after_bootstrap",
+    subagentRuntime: "bootstrap_per_agent"
+  };
+  if (!packageMatches || !protocolMatches) {
+    return unsupported(
+      "The loaded runtime does not match the version expected by the caller.",
+      ["Reload the matching plugin runtime in this agent or subagent, then rerun doctor({ check: [\"runtime\"] })."],
+      details,
+      undefined,
+      "runtime_version_mismatch"
+    );
+  }
+  return ok("Runtime and protocol versions are compatible.", details);
 }
 
 function bridgeCheck(boot: CommandResult<unknown> | undefined): CapabilityCheck {

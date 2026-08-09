@@ -66,6 +66,7 @@ import {
   BACKEND_RESPONSE_SCHEMA_VERSION,
   BACKEND_EVENT_SCHEMA_VERSION,
   type BackendCommand,
+  type BackendCapabilities,
   type BackendEvent,
   type BackendRequest,
   type BackendResponse
@@ -95,6 +96,15 @@ export type ChatGPTBackendRunner = {
 };
 
 export type ChatGPTBackendClient = {
+  version(): Promise<{
+    name: string;
+    runtime: "node";
+    packageVersion: string;
+    protocolVersion: string;
+    sessionId: string;
+  }>;
+  health(): Promise<{ ok: boolean; status: string; timestamp: string }>;
+  capabilities(): Promise<BackendCapabilities>;
   agent<TOutput = string>(config: ChatGPTAgentConfig<TOutput>): ChatGPTAgent<TOutput>;
   run<TOutput = string>(agent: ChatGPTAgent<TOutput>, input: ChatGPTRunInput): Promise<ChatGPTRunResult<TOutput>>;
   runner: ChatGPTBackendRunner;
@@ -205,6 +215,9 @@ export function createChatGPTBackendClient(transport: BackendTransport): ChatGPT
   };
 
   return {
+    version: () => request("backend.version"),
+    health: () => request("backend.health"),
+    capabilities: () => request("backend.capabilities"),
     agent: config => createChatGPTAgent(config),
     run: runner.run,
     runner,

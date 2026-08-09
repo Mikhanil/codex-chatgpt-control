@@ -208,13 +208,7 @@ python scripts/live_smoke.py --mode browser-bridge
 
 ### Codex Chrome Plugin Relay
 
-When the live backend is hosted inside the Codex Chrome plugin runtime, do not test bridge availability from a normal shell or an unbootstrapped Node REPL. First initialize the Chrome runtime:
-
-```js
-const { setupBrowserRuntime } = await import("/example/user/.codex/plugins/cache/openai-bundled/chrome/latest/scripts/browser-client.mjs");
-await setupBrowserRuntime({ globals: globalThis });
-globalThis.browser = await agent.browsers.get("extension");
-```
+When the live backend is hosted inside a Codex browser-control runtime, do not test bridge availability from a normal shell or an unbootstrapped JavaScript runtime. Read the currently installed Browser or Chrome control skill and follow its exact bootstrap procedure inside the current agent's own runtime. Never reuse another agent's globals, client, browser/page handles, or tab claim.
 
 Then run the backend server inside that active JS execution context and point Python at the stdio-to-HTTP relay:
 

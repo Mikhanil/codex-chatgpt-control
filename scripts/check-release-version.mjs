@@ -48,6 +48,30 @@ async function readPluginMetadata() {
   return readJson("../plugins/codex-chatgpt-control/.codex-plugin/plugin.json");
 }
 
+async function readRuntimeVersion() {
+  const source = await readFile(new URL("../packages/node/src/version.ts", import.meta.url), "utf8");
+  const version = source.match(/PACKAGE_VERSION\s*=\s*"([^"]+)"/)?.[1];
+  if (!version) throw new Error("Unable to read PACKAGE_VERSION from packages/node/src/version.ts");
+  return version;
+}
+
+async function documentedRuntimeVersions() {
+  const paths = [
+    "../skills/codex-chatgpt-control/SKILL.md",
+    "../plugins/codex-chatgpt-control/skills/codex-chatgpt-control/SKILL.md",
+    "../packages/node/references/backend-protocol.md",
+    "../packages/node/src/commands/registry.ts"
+  ];
+  const versions = [];
+  for (const path of paths) {
+    const source = await readFile(new URL(path, import.meta.url), "utf8");
+    for (const match of source.matchAll(/expectedPackageVersion:\s*"([^"]+)"/g)) {
+      versions.push({ path, version: match[1] });
+    }
+  }
+  return versions;
+}
+
 function tagFromEnvironment() {
   if (process.env.RELEASE_TAG) return process.env.RELEASE_TAG;
   if (process.env.GITHUB_REF_TYPE === "tag" && process.env.GITHUB_REF_NAME) return process.env.GITHUB_REF_NAME;
@@ -79,6 +103,8 @@ async function main() {
   const nodePackage = await readJson("../packages/node/package.json");
   const pythonPackage = await readPythonMetadata();
   const pluginPackage = await readPluginMetadata();
+  const runtimeVersion = await readRuntimeVersion();
+  const documentedVersions = await documentedRuntimeVersions();
 
   const tag = args.tag ?? tagFromEnvironment();
   const normalizedTag = tag ? normalizeTag(tag) : undefined;
@@ -87,6 +113,14 @@ async function main() {
   const errors = [];
   if (rootPackage.version !== nodePackage.version) {
     errors.push(`Root package version ${rootPackage.version} does not match Node package version ${nodePackage.version}`);
+  }
+  if (runtimeVersion !== nodePackage.version) {
+    errors.push(`Runtime version ${runtimeVersion} does not match Node package version ${nodePackage.version}`);
+  }
+  for (const documented of documentedVersions) {
+    if (documented.version !== nodePackage.version) {
+      errors.push(`Documented runtime version ${documented.version} in ${documented.path} does not match Node package version ${nodePackage.version}`);
+    }
   }
   if (nodePackage.name !== NODE_PACKAGE) {
     errors.push(`Node package name ${nodePackage.name} does not match ${NODE_PACKAGE}`);
@@ -117,6 +151,8 @@ async function main() {
     tag: tag ?? null,
     normalizedTag: normalizedTag ?? null,
     rootVersion: rootPackage.version,
+    runtimeVersion,
+    documentedRuntimeVersions: documentedVersions,
     node: {
       package: nodePackage.name,
       version: nodePackage.version

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { BackendSession } from "../../src/backend/session.js";
+import type { BrowserLike, PageLike } from "../../src/types.js";
 import {
   BACKEND_REQUEST_SCHEMA_VERSION,
   type BackendCommand,
@@ -19,7 +20,9 @@ describe("backend dispatch", () => {
       ok: true,
       result: {
         name: "codex-chatgpt-control-backend",
-        runtime: "node"
+        runtime: "node",
+        packageVersion: "0.5.1-alpha.1",
+        sessionId: "session-test"
       }
     });
 
@@ -37,8 +40,16 @@ describe("backend dispatch", () => {
       ok: true,
       result: {
         protocolVersion: BACKEND_REQUEST_SCHEMA_VERSION,
+        packageVersion: "0.5.1-alpha.1",
+        sessionId: "session-test",
         transports: ["stdio"],
-        streaming: { modes: ["ndjson"], tokenDeltas: false }
+        streaming: { modes: ["ndjson"], tokenDeltas: false },
+        execution: {
+          browserCommands: "serialized_per_session",
+          correlation: "requestId",
+          tabAffinity: "enforced_after_bootstrap",
+          subagentRuntime: "bootstrap_per_agent"
+        }
       }
     });
     expect((capabilities.result as { commands: string[] }).commands).toContain("runner.run");
@@ -67,6 +78,39 @@ describe("backend dispatch", () => {
         { command: "messages.ask" }
       ]
     });
+  });
+
+  it("serializes browser commands within one backend session", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const page: PageLike = {
+      id: "tab-1",
+      url: () => "https://chatgpt.com/",
+      title: async () => "ChatGPT",
+      content: async () => "<main>New chat Search chats Chat with ChatGPT</main>"
+    };
+    const browser: BrowserLike = {
+      name: "chrome",
+      tabs: {
+        selected: async () => {
+          active += 1;
+          maxActive = Math.max(maxActive, active);
+          await new Promise(resolve => setTimeout(resolve, 10));
+          active -= 1;
+          return page;
+        }
+      }
+    };
+    const session = new BackendSession({ backendSessionId: "session-test", browser });
+
+    const [first, second] = await Promise.all([
+      send(session, "session.bootstrap", { preferExistingTab: true }),
+      send(session, "session.bootstrap", { preferExistingTab: true })
+    ]);
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(maxActive).toBe(1);
   });
 
   it("dispatches runner.run and preserves structured browser-control results", async () => {
@@ -251,6 +295,7 @@ describe("backend dispatch", () => {
 
 function deterministicSession(limits: { maxPromptsPerRun?: number } = {}): BackendSession {
   return new BackendSession({
+    backendSessionId: "session-test",
     now: () => new Date("2026-06-06T00:00:00.000Z"),
     limits
   });

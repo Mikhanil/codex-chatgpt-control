@@ -548,6 +548,7 @@
       "defaults": {},
       "defaultTimeoutMs": 30000,
       "examples": [
+        "await chatgpt.doctor({ check: [\"runtime\"], expectedPackageVersion: \"0.5.1-alpha.1\", expectedProtocolVersion: \"chatgpt.browser_control.backend_request.v1\" });",
         "await chatgpt.doctor({ check: [\"bridge\", \"login\", \"upload\"] });",
         "await chatgpt.doctor({ check: [\"existing_tab\"], existingTab: { target: { type: \"conversationId\", conversationId: \"<conversation-id>\" }, ifMissing: \"block\" } });",
         "await chatgpt.doctor({ check: [\"file_preflight\"], files: [\"/absolute/host/path.md\"] });",
@@ -557,7 +558,7 @@
       "name": "doctor",
       "retryPolicy": "Return structured readiness checks; retry only after the reported blocker or permission setting changes.",
       "risk": "low",
-      "summary": "Preflight browser bridge, login, upload, local files, existing-tab, artifact, localization, report, and selector readiness."
+      "summary": "Preflight runtime compatibility, browser bridge, login, upload, local files, existing-tab, artifact, localization, report, and selector readiness."
     },
     {
       "args": {

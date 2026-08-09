@@ -3,7 +3,7 @@ import type { BlockerKind, CommandContext, CommandResult } from "./types.js";
 type BlockerDetails = Partial<Omit<NonNullable<CommandResult["blocker"]>, "kind" | "message" | "visibleText">>;
 
 export const BROWSER_BRIDGE_UNAVAILABLE_MESSAGE =
-  "Codex cannot access the ChatGPT browser bridge from this backend process. In an ordinary shell this is expected; for a live Codex Chrome run, bootstrap the Chrome plugin runtime with setupBrowserRuntime({ globals: globalThis }) before using globalThis.agent.";
+  "Codex cannot access the ChatGPT browser bridge from this backend process. In an ordinary shell this is expected; for a live run, bootstrap this agent's own JavaScript runtime by following the currently installed Browser or Chrome control skill before using globalThis.agent.";
 
 export const BROWSER_BRIDGE_REMEDIATION: NonNullable<NonNullable<CommandResult["blocker"]>["remediation"]> = [
   {
@@ -12,8 +12,8 @@ export const BROWSER_BRIDGE_REMEDIATION: NonNullable<NonNullable<CommandResult["
     userActionRequired: false
   },
   {
-    label: "Codex Chrome bootstrap",
-    instruction: "For a live run, initialize the Chrome plugin runtime in node_repl with setupBrowserRuntime({ globals: globalThis }), then set globalThis.browser = await agent.browsers.get(\"extension\") before calling createChatGPT({ agent: globalThis.agent }).",
+    label: "Codex browser bootstrap",
+    instruction: "For a live run, read the currently installed Browser or Chrome control skill and follow its exact bootstrap procedure inside this agent or subagent's own JavaScript runtime. Do not reuse another agent's globals, client, browser/page handles, or tab claim.",
     userActionRequired: false
   },
   {

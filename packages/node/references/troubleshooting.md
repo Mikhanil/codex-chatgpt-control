@@ -30,13 +30,7 @@ The structured blocker should include `code: "codex_chrome_bridge_unavailable"` 
 
 Use `chatgpt.explainBlocker(result)` or Python `explain_blocker(result)` when rendering a blocker in logs or CLI output. The explanation keeps the structured blocker intact and adds category, severity, conservative retry/resume guidance, next-command hints, and Markdown.
 
-Do not conclude that Chrome or the extension is broken from a plain shell result, or from checking `globalThis.agent` before the Chrome plugin runtime is initialized. For a true Codex Chrome-plugin live run, bootstrap the runtime first:
-
-```js
-const { setupBrowserRuntime } = await import("/example/user/.codex/plugins/cache/openai-bundled/chrome/latest/scripts/browser-client.mjs");
-await setupBrowserRuntime({ globals: globalThis });
-globalThis.browser = await agent.browsers.get("extension");
-```
+Do not conclude that Chrome or the extension is broken from a plain shell result, or from checking `globalThis.agent` before the browser-control runtime is initialized. For a live run, read the currently installed Browser or Chrome control skill and follow its exact bootstrap procedure inside the current agent's own JavaScript runtime. Do not reuse another agent's globals, client, browser/page handles, or tab claim.
 
 If the command was intentionally running in a bridge-enabled host and still returns this blocker, verify that the Codex Chrome extension is installed and enabled, then restart Chrome or Codex if the backend is still unavailable. Do not keep retrying the same attach path indefinitely.
 

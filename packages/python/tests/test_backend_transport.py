@@ -2,6 +2,8 @@ import json
 import sys
 import tempfile
 import textwrap
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -169,6 +171,72 @@ class StdioBackendTransportTests(unittest.TestCase):
 
         self.assertEqual([event["type"] for event in events], ["run_item_stream_event", "completed"])
         self.assertEqual(events[0]["name"], "message.submitted")
+
+    def test_parallel_requests_keep_responses_correlated(self) -> None:
+        transport = StdioBackendTransport(
+            command=fake_backend_command(
+                f"""
+                import json
+                import sys
+                import threading
+                import time
+
+                first = json.loads(sys.stdin.readline())
+                pending = []
+
+                def read_second():
+                    pending.append(json.loads(sys.stdin.readline()))
+
+                reader = threading.Thread(target=read_second)
+                reader.start()
+                reader.join(timeout=0.05)
+
+                def respond(request, parallel_observed):
+                    print(json.dumps({{
+                        "schemaVersion": {BACKEND_RESPONSE_SCHEMA_VERSION!r},
+                        "requestId": request.get("requestId"),
+                        "ok": True,
+                        "result": {{
+                            "seenCommand": request["command"],
+                            "parallelObserved": parallel_observed,
+                        }},
+                    }}), flush=True)
+
+                if pending:
+                    respond(pending[0], True)
+                    time.sleep(0.01)
+                    respond(first, True)
+                else:
+                    respond(first, False)
+                    reader.join(timeout=1)
+                    respond(pending[0], False)
+                """
+            )
+        )
+        results: dict[str, dict] = {}
+
+        def run(command: str) -> None:
+            results[command] = transport.request(backend_request(command, request_id=f"req_{command}"))
+
+        slow = threading.Thread(target=run, args=("slow",))
+        fast = threading.Thread(target=run, args=("fast",))
+        try:
+            slow.start()
+            time.sleep(0.01)
+            fast.start()
+            slow.join(timeout=2)
+            fast.join(timeout=2)
+        finally:
+            transport.close()
+
+        self.assertFalse(slow.is_alive())
+        self.assertFalse(fast.is_alive())
+        self.assertEqual(results["slow"]["requestId"], "req_slow")
+        self.assertEqual(results["fast"]["requestId"], "req_fast")
+        self.assertEqual(results["slow"]["result"]["seenCommand"], "slow")
+        self.assertEqual(results["fast"]["result"]["seenCommand"], "fast")
+        self.assertFalse(results["slow"]["result"]["parallelObserved"])
+        self.assertFalse(results["fast"]["result"]["parallelObserved"])
 
 
 def backend_request(command: str, *, request_id: str = "req_test") -> dict:

@@ -72,6 +72,24 @@ describe("ChatGPT backend client", () => {
     expect(backendPlan).toEqual(inProcessPlan);
   });
 
+  it("exposes backend version, health, and capability handshakes", async () => {
+    const backend = createChatGPTBackendClient(new SessionTransport(new BackendSession({
+      backendSessionId: "session-test",
+      ...deterministicOptions()
+    })));
+
+    await expect(backend.version()).resolves.toMatchObject({
+      packageVersion: "0.5.1-alpha.1",
+      protocolVersion: BACKEND_REQUEST_SCHEMA_VERSION,
+      sessionId: "session-test"
+    });
+    await expect(backend.health()).resolves.toMatchObject({ ok: true, status: "ok" });
+    await expect(backend.capabilities()).resolves.toMatchObject({
+      sessionId: "session-test",
+      execution: { browserCommands: "serialized_per_session" }
+    });
+  });
+
   it("matches in-process unsupported Responses adapter output", async () => {
     const options = deterministicOptions({ maxPromptsPerRun: 0 });
     const inProcess = createChatGPT(options);
