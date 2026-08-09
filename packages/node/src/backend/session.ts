@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { createChatGPT, type ChatGPTClient, type ChatGPTClientOptions } from "../client.js";
+import { PACKAGE_VERSION } from "../version.js";
 import type { ChatGPTAgentConfig, ChatGPTRunInput } from "../runner/types.js";
 import type {
   ArtifactDownloadArgs,
@@ -20,23 +22,36 @@ import {
   ProtocolError,
   type BackendEvent,
   type BackendCapabilities,
+  type BackendCommand,
   type BackendRequest,
   type BackendResponse
 } from "./protocol.js";
 
-export type BackendSessionOptions = ChatGPTClientOptions;
+export type BackendSessionOptions = ChatGPTClientOptions & {
+  backendSessionId?: string;
+};
 
 export class BackendSession {
   private clientInstance: ChatGPTClient | undefined;
+  private readonly options: ChatGPTClientOptions;
+  private readonly sessionId: string;
+  private browserOperationTail: Promise<void> = Promise.resolve();
 
-  constructor(private readonly options: BackendSessionOptions = {}) {}
+  constructor(options: BackendSessionOptions = {}) {
+    const { backendSessionId, ...clientOptions } = options;
+    this.options = clientOptions;
+    this.sessionId = backendSessionId ?? randomUUID();
+  }
 
   async dispatch(request: BackendRequest): Promise<BackendResponse> {
+    if (!requiresBrowserSerialization(request.command)) {
+      return this.dispatchNow(request);
+    }
+    const release = await this.acquireBrowserOperation();
     try {
-      const result = await dispatchBackendCommand(this.client(), request);
-      return backendResponseOk(request.requestId, result);
-    } catch (error) {
-      return backendResponseError(request.requestId, error instanceof Error ? error : new Error(String(error)));
+      return await this.dispatchNow(request);
+    } finally {
+      release();
     }
   }
 
@@ -52,17 +67,22 @@ export class BackendSession {
         return;
       }
 
-      const payload = request.payload;
-      const agent = this.client().agent(agentConfig(payload));
-      const stream = this.client().runner.run(agent, runInput(payload), { stream: true });
-      for await (const event of stream) {
-        yield backendEvent(request.requestId, {
-          type: "run_item_stream_event",
-          name: event.name,
-          item: event.item as unknown as Record<string, unknown>
-        });
+      const release = await this.acquireBrowserOperation();
+      try {
+        const payload = request.payload;
+        const agent = this.client().agent(agentConfig(payload));
+        const stream = this.client().runner.run(agent, runInput(payload), { stream: true });
+        for await (const event of stream) {
+          yield backendEvent(request.requestId, {
+            type: "run_item_stream_event",
+            name: event.name,
+            item: event.item as unknown as Record<string, unknown>
+          });
+        }
+        yield backendEventCompleted(request.requestId, await stream.completed);
+      } finally {
+        release();
       }
-      yield backendEventCompleted(request.requestId, await stream.completed);
     } catch (error) {
       const protocolError = error instanceof ProtocolError
         ? error
@@ -82,9 +102,28 @@ export class BackendSession {
     this.clientInstance ??= createChatGPT(this.options);
     return this.clientInstance;
   }
+
+  private async dispatchNow(request: BackendRequest): Promise<BackendResponse> {
+    try {
+      const result = await dispatchBackendCommand(this.client(), request, this.sessionId);
+      return backendResponseOk(request.requestId, result);
+    } catch (error) {
+      return backendResponseError(request.requestId, error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  private async acquireBrowserOperation(): Promise<() => void> {
+    const previous = this.browserOperationTail;
+    let release!: () => void;
+    this.browserOperationTail = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    await previous;
+    return release;
+  }
 }
 
-async function dispatchBackendCommand(client: ChatGPTClient, request: BackendRequest): Promise<unknown> {
+async function dispatchBackendCommand(client: ChatGPTClient, request: BackendRequest, sessionId: string): Promise<unknown> {
   const payload = request.payload;
 
   switch (request.command) {
@@ -92,6 +131,8 @@ async function dispatchBackendCommand(client: ChatGPTClient, request: BackendReq
       return {
         name: "codex-chatgpt-control-backend",
         runtime: "node",
+        packageVersion: PACKAGE_VERSION,
+        sessionId,
         protocolVersion: BACKEND_REQUEST_SCHEMA_VERSION
       };
     case "backend.health":
@@ -101,7 +142,7 @@ async function dispatchBackendCommand(client: ChatGPTClient, request: BackendReq
         timestamp: new Date().toISOString()
       };
     case "backend.capabilities":
-      return backendCapabilities();
+      return backendCapabilities(sessionId);
     case "runner.run": {
       const agent = client.agent(agentConfig(payload));
       return client.runner.run(agent, runInput(payload));
@@ -229,16 +270,42 @@ async function dispatchBackendCommand(client: ChatGPTClient, request: BackendReq
   }
 }
 
-function backendCapabilities(): BackendCapabilities {
+function backendCapabilities(sessionId: string): BackendCapabilities {
   return {
     protocolVersion: BACKEND_REQUEST_SCHEMA_VERSION,
+    packageVersion: PACKAGE_VERSION,
+    sessionId,
     commands: [...backendCommands],
     transports: ["stdio"],
     streaming: {
       modes: ["ndjson"],
       tokenDeltas: false
+    },
+    execution: {
+      browserCommands: "serialized_per_session",
+      correlation: "requestId",
+      tabAffinity: "enforced_after_bootstrap",
+      subagentRuntime: "bootstrap_per_agent"
     }
   };
+}
+
+const NON_BROWSER_COMMANDS = new Set<BackendCommand>([
+  "backend.version",
+  "backend.health",
+  "backend.capabilities",
+  "runner.plan",
+  "files.preflight",
+  "projects.sources.planAdd",
+  "reports.redact",
+  "reports.summarize",
+  "commands",
+  "describe",
+  "help"
+]);
+
+function requiresBrowserSerialization(command: BackendCommand): boolean {
+  return !NON_BROWSER_COMMANDS.has(command);
 }
 
 function agentConfig(payload: Record<string, unknown>): ChatGPTAgentConfig {

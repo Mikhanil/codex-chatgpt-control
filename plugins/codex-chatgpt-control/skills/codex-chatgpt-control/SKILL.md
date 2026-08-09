@@ -26,6 +26,16 @@ This skill is for visible, user-directed ChatGPT workflows only. It is not an Op
 
 ## Plugin Runtime
 
+### Agent runtime and concurrency contract
+
+- The Browser or Chrome control skill and a bridge-enabled JavaScript runtime are required dependencies. Skill discovery alone does not prove that either callable capability is present.
+- Each agent or subagent must bootstrap its own JavaScript runtime and load the plugin runtime itself. JavaScript globals, imported modules, SDK clients, browser objects, page handles, and tab claims are not inherited from another agent.
+- Run `doctor({ check: ["runtime"], expectedPackageVersion: "0.5.1-alpha.1", expectedProtocolVersion: "chatgpt.browser_control.backend_request.v1" })` before a delegated live workflow. A mismatch is a structured blocker; do not mix skill instructions with another cached runtime.
+- A backend session serializes browser commands and identifies itself with `sessionId`; request and event correlation uses `requestId`. Preserve both values in diagnostics.
+- Direct `createChatGPT(...)` clients require caller serialization: keep only one in-flight browser operation for a claimed tab. For intentional parallel work, create separate agent runtimes, SDK clients, and tabs, and preserve each task/thread URL.
+
+If a required dependency is unavailable, report which capability is missing and stop. Do not assume a parent agent's working bridge makes it available to a subagent.
+
 Resolve relative paths from this `SKILL.md` directory. The plugin runtime lives at:
 
 ```text
@@ -205,7 +215,9 @@ Run a diagnostic before long workflows:
 
 ```js
 const diagnostic = await chatgpt.doctor({
-  check: ["bridge", "login", "upload", "download", "clipboard"]
+  check: ["runtime", "bridge", "login", "upload", "download", "clipboard"],
+  expectedPackageVersion: "0.5.1-alpha.1",
+  expectedProtocolVersion: "chatgpt.browser_control.backend_request.v1"
 });
 ```
 

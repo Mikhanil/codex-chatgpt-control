@@ -241,7 +241,7 @@ import { tmpdir } from "node:os";
 import { join as join5 } from "node:path";
 
 // src/errors.ts
-var BROWSER_BRIDGE_UNAVAILABLE_MESSAGE = "Codex cannot access the ChatGPT browser bridge from this backend process. In an ordinary shell this is expected; for a live Codex Chrome run, bootstrap the Chrome plugin runtime with setupBrowserRuntime({ globals: globalThis }) before using globalThis.agent.";
+var BROWSER_BRIDGE_UNAVAILABLE_MESSAGE = "Codex cannot access the ChatGPT browser bridge from this backend process. In an ordinary shell this is expected; for a live run, bootstrap this agent's own JavaScript runtime by following the currently installed Browser or Chrome control skill before using globalThis.agent.";
 var BROWSER_BRIDGE_REMEDIATION = [
   {
     label: "Ordinary shell",
@@ -249,8 +249,8 @@ var BROWSER_BRIDGE_REMEDIATION = [
     userActionRequired: false
   },
   {
-    label: "Codex Chrome bootstrap",
-    instruction: 'For a live run, initialize the Chrome plugin runtime in node_repl with setupBrowserRuntime({ globals: globalThis }), then set globalThis.browser = await agent.browsers.get("extension") before calling createChatGPT({ agent: globalThis.agent }).',
+    label: "Codex browser bootstrap",
+    instruction: "For a live run, read the currently installed Browser or Chrome control skill and follow its exact bootstrap procedure inside this agent or subagent's own JavaScript runtime. Do not reuse another agent's globals, client, browser/page handles, or tab claim.",
     userActionRequired: false
   },
   {
@@ -11558,6 +11558,75 @@ function threadOpenSteps(thread) {
 // src/commands/doctor.ts
 import { constants as constants2 } from "node:fs";
 import { access as access2, stat as stat5 } from "node:fs/promises";
+
+// src/backend/protocol.ts
+var BACKEND_REQUEST_SCHEMA_VERSION = "chatgpt.browser_control.backend_request.v1";
+var backendCommands = [
+  "backend.version",
+  "backend.health",
+  "backend.capabilities",
+  "runner.run",
+  "runner.plan",
+  "runner.stream",
+  "responses.create",
+  "ask",
+  "askInThread",
+  "askWithFiles",
+  "askAndDownload",
+  "runMessages",
+  "openThread",
+  "readLatest",
+  "copyLatest",
+  "downloadLatest",
+  "runPlan",
+  "doctor",
+  "createReport",
+  "reports.create",
+  "reports.redact",
+  "reports.summarize",
+  "commands",
+  "describe",
+  "help",
+  "session.bootstrap",
+  "experience.detect",
+  "experience.open",
+  "configuration.inspect",
+  "configuration.apply",
+  "work.start",
+  "work.status",
+  "work.wait",
+  "work.steer",
+  "work.readLatest",
+  "threads.new",
+  "threads.search",
+  "threads.open",
+  "messages.compose",
+  "messages.submit",
+  "messages.ask",
+  "messages.wait",
+  "messages.readLatest",
+  "messages.status",
+  "messages.waitAndRead",
+  "artifacts.listLatest",
+  "artifacts.wait",
+  "artifacts.downloadLatest",
+  "files.preflight",
+  "files.attach",
+  "files.downloadLatest",
+  "projects.sources.list",
+  "projects.sources.planAdd",
+  "projects.sources.add",
+  "modes.set",
+  "modes.get",
+  "tools.select",
+  "response.copy"
+];
+var commandSet = new Set(backendCommands);
+
+// src/version.ts
+var PACKAGE_VERSION = "0.5.1-alpha.1";
+
+// src/commands/doctor.ts
 var DEFAULT_CHECKS = ["bridge", "login", "upload", "download", "clipboard", "modes", "tools", "selectors"];
 var BOOTSTRAP_CHECKS = /* @__PURE__ */ new Set(["bridge", "login", "upload", "download", "modes", "tools", "selectors"]);
 var UPLOAD_REMEDIATION = [
@@ -11590,6 +11659,9 @@ async function doctor(env, args = {}) {
   const boot2 = wantsExistingTab || wanted.some((check) => BOOTSTRAP_CHECKS.has(check)) ? await bootstrap(env, existingTab === void 0 ? { preferExistingTab: true, timeoutMs: 3e4 } : { existingTab, preferExistingTab: false, timeoutMs: 3e4 }) : void 0;
   for (const check of wanted) {
     switch (check) {
+      case "runtime":
+        checks.runtime = runtimeCheck(env, args);
+        break;
       case "bridge":
         checks.bridge = boot2?.ok ? ok("Chrome bridge is available.") : bridgeCheck(boot2);
         break;
@@ -11633,6 +11705,35 @@ async function doctor(env, args = {}) {
   }
   const ready = Object.values(checks).every((check) => check?.status === "ok" || check?.status === "unknown");
   return resultOk({ ready, checks }, await contextFromPage(env.page));
+}
+function runtimeCheck(env, args) {
+  const packageMatches = args.expectedPackageVersion === void 0 || args.expectedPackageVersion === PACKAGE_VERSION;
+  const protocolMatches = args.expectedProtocolVersion === void 0 || args.expectedProtocolVersion === BACKEND_REQUEST_SCHEMA_VERSION;
+  const details = {
+    packageVersion: PACKAGE_VERSION,
+    protocolVersion: BACKEND_REQUEST_SCHEMA_VERSION,
+    expectedPackageVersion: args.expectedPackageVersion,
+    expectedProtocolVersion: args.expectedProtocolVersion,
+    executionSurface: env.page !== void 0 ? "page_injected" : env.agent !== void 0 || env.browser !== void 0 ? "bridge_host" : "ordinary_process",
+    agentPresent: env.agent !== void 0,
+    browserPresent: env.browser !== void 0,
+    pagePresent: env.page !== void 0,
+    bootstrapRequired: env.page === void 0,
+    browserCommands: "caller_serialized",
+    correlation: "backend_request_id",
+    tabAffinity: "enforced_after_bootstrap",
+    subagentRuntime: "bootstrap_per_agent"
+  };
+  if (!packageMatches || !protocolMatches) {
+    return unsupported(
+      "The loaded runtime does not match the version expected by the caller.",
+      ['Reload the matching plugin runtime in this agent or subagent, then rerun doctor({ check: ["runtime"] }).'],
+      details,
+      void 0,
+      "runtime_version_mismatch"
+    );
+  }
+  return ok("Runtime and protocol versions are compatible.", details);
 }
 function bridgeCheck(boot2) {
   if (boot2 === void 0) {
@@ -12132,7 +12233,8 @@ var descriptors = [
   report("redacted-run-report", "Named macro: create a redacted report for a supplied CommandResult.", [
     `await chatgpt.runPlan({ name: "redacted-run-report", input: { result } });`
   ]),
-  diagnostic("doctor", "Preflight browser bridge, login, upload, local files, existing-tab, artifact, localization, report, and selector readiness.", [
+  diagnostic("doctor", "Preflight runtime compatibility, browser bridge, login, upload, local files, existing-tab, artifact, localization, report, and selector readiness.", [
+    `await chatgpt.doctor({ check: ["runtime"], expectedPackageVersion: "0.5.1-alpha.1", expectedProtocolVersion: "chatgpt.browser_control.backend_request.v1" });`,
     `await chatgpt.doctor({ check: ["bridge", "login", "upload"] });`,
     `await chatgpt.doctor({ check: ["existing_tab"], existingTab: { target: { type: "conversationId", conversationId: "<conversation-id>" }, ifMissing: "block" } });`,
     `await chatgpt.doctor({ check: ["file_preflight"], files: ["/absolute/host/path.md"] });`,

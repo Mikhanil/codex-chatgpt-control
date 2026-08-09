@@ -3,6 +3,9 @@
 // src/backend/stdio-server.ts
 import { createInterface } from "node:readline";
 
+// src/backend/session.ts
+import { randomUUID as randomUUID2 } from "node:crypto";
+
 // src/commands/artifacts.ts
 import { copyFile as copyFile2, mkdir as mkdir2, stat as stat2, writeFile } from "node:fs/promises";
 import { basename as basename2, join as join2, resolve as resolve2 } from "node:path";
@@ -3394,7 +3397,7 @@ function requiredLocator(page, selector) {
 }
 
 // src/errors.ts
-var BROWSER_BRIDGE_UNAVAILABLE_MESSAGE = "Codex cannot access the ChatGPT browser bridge from this backend process. In an ordinary shell this is expected; for a live Codex Chrome run, bootstrap the Chrome plugin runtime with setupBrowserRuntime({ globals: globalThis }) before using globalThis.agent.";
+var BROWSER_BRIDGE_UNAVAILABLE_MESSAGE = "Codex cannot access the ChatGPT browser bridge from this backend process. In an ordinary shell this is expected; for a live run, bootstrap this agent's own JavaScript runtime by following the currently installed Browser or Chrome control skill before using globalThis.agent.";
 var BROWSER_BRIDGE_REMEDIATION = [
   {
     label: "Ordinary shell",
@@ -3402,8 +3405,8 @@ var BROWSER_BRIDGE_REMEDIATION = [
     userActionRequired: false
   },
   {
-    label: "Codex Chrome bootstrap",
-    instruction: 'For a live run, initialize the Chrome plugin runtime in node_repl with setupBrowserRuntime({ globals: globalThis }), then set globalThis.browser = await agent.browsers.get("extension") before calling createChatGPT({ agent: globalThis.agent }).',
+    label: "Codex browser bootstrap",
+    instruction: "For a live run, read the currently installed Browser or Chrome control skill and follow its exact bootstrap procedure inside this agent or subagent's own JavaScript runtime. Do not reuse another agent's globals, client, browser/page handles, or tab claim.",
     userActionRequired: false
   },
   {
@@ -6988,6 +6991,157 @@ function renderMarkdown(explanation) {
   return lines.join("\n");
 }
 
+// src/backend/protocol.ts
+var BACKEND_REQUEST_SCHEMA_VERSION = "chatgpt.browser_control.backend_request.v1";
+var BACKEND_RESPONSE_SCHEMA_VERSION = "chatgpt.browser_control.backend_response.v1";
+var BACKEND_EVENT_SCHEMA_VERSION = "chatgpt.browser_control.backend_event.v1";
+var backendCommands = [
+  "backend.version",
+  "backend.health",
+  "backend.capabilities",
+  "runner.run",
+  "runner.plan",
+  "runner.stream",
+  "responses.create",
+  "ask",
+  "askInThread",
+  "askWithFiles",
+  "askAndDownload",
+  "runMessages",
+  "openThread",
+  "readLatest",
+  "copyLatest",
+  "downloadLatest",
+  "runPlan",
+  "doctor",
+  "createReport",
+  "reports.create",
+  "reports.redact",
+  "reports.summarize",
+  "commands",
+  "describe",
+  "help",
+  "session.bootstrap",
+  "experience.detect",
+  "experience.open",
+  "configuration.inspect",
+  "configuration.apply",
+  "work.start",
+  "work.status",
+  "work.wait",
+  "work.steer",
+  "work.readLatest",
+  "threads.new",
+  "threads.search",
+  "threads.open",
+  "messages.compose",
+  "messages.submit",
+  "messages.ask",
+  "messages.wait",
+  "messages.readLatest",
+  "messages.status",
+  "messages.waitAndRead",
+  "artifacts.listLatest",
+  "artifacts.wait",
+  "artifacts.downloadLatest",
+  "files.preflight",
+  "files.attach",
+  "files.downloadLatest",
+  "projects.sources.list",
+  "projects.sources.planAdd",
+  "projects.sources.add",
+  "modes.set",
+  "modes.get",
+  "tools.select",
+  "response.copy"
+];
+var ProtocolError = class extends Error {
+  constructor(code, message, recoverable) {
+    super(message);
+    this.code = code;
+    this.recoverable = recoverable;
+    this.name = "ProtocolError";
+  }
+  code;
+  recoverable;
+};
+var commandSet = new Set(backendCommands);
+function parseBackendRequest(raw) {
+  if (!isRecord2(raw)) {
+    throw new ProtocolError("invalid_request", "Backend request must be an object.", false);
+  }
+  const schemaVersion = raw.schemaVersion;
+  if (schemaVersion !== BACKEND_REQUEST_SCHEMA_VERSION) {
+    throw new ProtocolError(
+      "unsupported_schema_version",
+      `Unsupported backend request schemaVersion: ${String(schemaVersion)}`,
+      false
+    );
+  }
+  const command = raw.command;
+  if (typeof command !== "string" || !commandSet.has(command)) {
+    throw new ProtocolError("unknown_command", `Unknown backend command: ${String(command)}`, false);
+  }
+  const request = {
+    schemaVersion: BACKEND_REQUEST_SCHEMA_VERSION,
+    command,
+    payload: normalizePayload(raw.payload)
+  };
+  if (raw.requestId !== void 0) {
+    if (typeof raw.requestId !== "string" || raw.requestId.length === 0) {
+      throw new ProtocolError("invalid_request", "Backend request requestId must be a non-empty string when provided.", false);
+    }
+    request.requestId = raw.requestId;
+  }
+  return request;
+}
+function backendResponseOk(requestId, result) {
+  const response = {
+    schemaVersion: BACKEND_RESPONSE_SCHEMA_VERSION,
+    ok: true,
+    result
+  };
+  if (requestId !== void 0) response.requestId = requestId;
+  return response;
+}
+function backendResponseError(requestId, error) {
+  const response = {
+    schemaVersion: BACKEND_RESPONSE_SCHEMA_VERSION,
+    ok: false,
+    error: {
+      code: error instanceof ProtocolError ? error.code : "invalid_request",
+      message: error.message,
+      recoverable: error instanceof ProtocolError ? error.recoverable : false
+    }
+  };
+  if (requestId !== void 0) response.requestId = requestId;
+  return response;
+}
+function backendEvent(requestId, payload) {
+  const event = {
+    schemaVersion: BACKEND_EVENT_SCHEMA_VERSION,
+    ...payload
+  };
+  if (requestId !== void 0) event.requestId = requestId;
+  return event;
+}
+function backendEventCompleted(requestId, result) {
+  return backendEvent(requestId, { type: "completed", result });
+}
+function normalizePayload(value) {
+  if (value === void 0) return {};
+  if (!isRecord2(value)) {
+    throw new ProtocolError("invalid_request", "Backend request payload must be an object when provided.", false);
+  }
+  return value;
+}
+function isRecord2(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+// src/version.ts
+var PACKAGE_VERSION = "0.5.1-alpha.1";
+
 // src/commands/doctor.ts
 var DEFAULT_CHECKS = ["bridge", "login", "upload", "download", "clipboard", "modes", "tools", "selectors"];
 var BOOTSTRAP_CHECKS = /* @__PURE__ */ new Set(["bridge", "login", "upload", "download", "modes", "tools", "selectors"]);
@@ -7021,6 +7175,9 @@ async function doctor(env, args = {}) {
   const boot = wantsExistingTab || wanted.some((check) => BOOTSTRAP_CHECKS.has(check)) ? await bootstrap(env, existingTab === void 0 ? { preferExistingTab: true, timeoutMs: 3e4 } : { existingTab, preferExistingTab: false, timeoutMs: 3e4 }) : void 0;
   for (const check of wanted) {
     switch (check) {
+      case "runtime":
+        checks.runtime = runtimeCheck(env, args);
+        break;
       case "bridge":
         checks.bridge = boot?.ok ? ok("Chrome bridge is available.") : bridgeCheck(boot);
         break;
@@ -7064,6 +7221,35 @@ async function doctor(env, args = {}) {
   }
   const ready = Object.values(checks).every((check) => check?.status === "ok" || check?.status === "unknown");
   return resultOk({ ready, checks }, await contextFromPage(env.page));
+}
+function runtimeCheck(env, args) {
+  const packageMatches = args.expectedPackageVersion === void 0 || args.expectedPackageVersion === PACKAGE_VERSION;
+  const protocolMatches = args.expectedProtocolVersion === void 0 || args.expectedProtocolVersion === BACKEND_REQUEST_SCHEMA_VERSION;
+  const details = {
+    packageVersion: PACKAGE_VERSION,
+    protocolVersion: BACKEND_REQUEST_SCHEMA_VERSION,
+    expectedPackageVersion: args.expectedPackageVersion,
+    expectedProtocolVersion: args.expectedProtocolVersion,
+    executionSurface: env.page !== void 0 ? "page_injected" : env.agent !== void 0 || env.browser !== void 0 ? "bridge_host" : "ordinary_process",
+    agentPresent: env.agent !== void 0,
+    browserPresent: env.browser !== void 0,
+    pagePresent: env.page !== void 0,
+    bootstrapRequired: env.page === void 0,
+    browserCommands: "caller_serialized",
+    correlation: "backend_request_id",
+    tabAffinity: "enforced_after_bootstrap",
+    subagentRuntime: "bootstrap_per_agent"
+  };
+  if (!packageMatches || !protocolMatches) {
+    return unsupported(
+      "The loaded runtime does not match the version expected by the caller.",
+      ['Reload the matching plugin runtime in this agent or subagent, then rerun doctor({ check: ["runtime"] }).'],
+      details,
+      void 0,
+      "runtime_version_mismatch"
+    );
+  }
+  return ok("Runtime and protocol versions are compatible.", details);
 }
 function bridgeCheck(boot) {
   if (boot === void 0) {
@@ -7564,7 +7750,7 @@ function childTimeoutMs(deadline, capMs, nowMs = Date.now()) {
 
 // src/commands/output.ts
 function commandOutputText(data) {
-  if (!isRecord2(data)) return void 0;
+  if (!isRecord3(data)) return void 0;
   const responseText = data.responseText;
   if (typeof responseText === "string") return responseText;
   const role = data.role;
@@ -7584,7 +7770,7 @@ function withCommandOutputText(result) {
   const outputText = commandOutputText(result.data);
   return outputText === void 0 ? result : { ...result, output_text: outputText };
 }
-function isRecord2(value) {
+function isRecord3(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -10802,7 +10988,7 @@ function outputTextFromResult(result) {
   return findStringByKey(result.data, /* @__PURE__ */ new Set(["responseText", "markdown", "text", "normalizedText", "visibleText"]));
 }
 function findStringByKey(value, keys) {
-  if (!isRecord3(value)) return void 0;
+  if (!isRecord4(value)) return void 0;
   for (const [key, child] of Object.entries(value)) {
     if (keys.has(key) && typeof child === "string" && child.length > 0) return child;
   }
@@ -10812,7 +10998,7 @@ function findStringByKey(value, keys) {
   }
   return void 0;
 }
-function isRecord3(value) {
+function isRecord4(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
@@ -11061,7 +11247,8 @@ var descriptors = [
   report("redacted-run-report", "Named macro: create a redacted report for a supplied CommandResult.", [
     `await chatgpt.runPlan({ name: "redacted-run-report", input: { result } });`
   ]),
-  diagnostic("doctor", "Preflight browser bridge, login, upload, local files, existing-tab, artifact, localization, report, and selector readiness.", [
+  diagnostic("doctor", "Preflight runtime compatibility, browser bridge, login, upload, local files, existing-tab, artifact, localization, report, and selector readiness.", [
+    `await chatgpt.doctor({ check: ["runtime"], expectedPackageVersion: "0.5.1-alpha.1", expectedProtocolVersion: "chatgpt.browser_control.backend_request.v1" });`,
     `await chatgpt.doctor({ check: ["bridge", "login", "upload"] });`,
     `await chatgpt.doctor({ check: ["existing_tab"], existingTab: { target: { type: "conversationId", conversationId: "<conversation-id>" }, ifMissing: "block" } });`,
     `await chatgpt.doctor({ check: ["file_preflight"], files: ["/absolute/host/path.md"] });`,
@@ -12382,7 +12569,7 @@ function toRunResult(agent, result) {
   return mapped;
 }
 function extractOutputText(data) {
-  if (!isRecord4(data)) return "";
+  if (!isRecord5(data)) return "";
   if (typeof data.responseText === "string") return data.responseText;
   if (typeof data.text === "string") return data.text;
   for (const value of Object.values(data)) {
@@ -12421,7 +12608,7 @@ function lifecycleItemsFromSteps(steps) {
   if (steps === void 0) return [];
   const items = [];
   for (const step of steps) {
-    if (!step.ok || !isRecord4(step.dataPreview)) continue;
+    if (!step.ok || !isRecord5(step.dataPreview)) continue;
     if (step.command === "experience.open") {
       const experience = step.dataPreview.experience;
       if (experience === "chat" || experience === "work") {
@@ -12438,7 +12625,7 @@ function lifecycleItemsFromSteps(steps) {
       const item = {
         type: "configuration.applied"
       };
-      if (isRecord4(step.dataPreview.requested)) {
+      if (isRecord5(step.dataPreview.requested)) {
         item.requested = step.dataPreview.requested;
       }
       if (typeof step.dataPreview.verified === "boolean") {
@@ -12450,7 +12637,7 @@ function lifecycleItemsFromSteps(steps) {
   return items;
 }
 function messageItemsFromData(data) {
-  if (!isRecord4(data)) return [];
+  if (!isRecord5(data)) return [];
   const items = [];
   if (typeof data.prompt === "string" && data.prompt.length > 0) {
     items.push({
@@ -12504,7 +12691,7 @@ function inProgressItem(outputText, completionState, generationActive) {
   return item;
 }
 function readCompletionState(data) {
-  if (!isRecord4(data)) return void 0;
+  if (!isRecord5(data)) return void 0;
   const value = data.completionState;
   if (value === "complete" || value === "generating" || value === "stopped" || value === "partial" || value === "unknown") {
     return value;
@@ -12516,7 +12703,7 @@ function readCompletionState(data) {
   return void 0;
 }
 function readSubmissionState(data) {
-  if (!isRecord4(data)) return void 0;
+  if (!isRecord5(data)) return void 0;
   const value = data.submissionState;
   if (value === "not_submitted" || value === "submitted" || value === "submitted_unconfirmed" || value === "submitted_generating") {
     return value;
@@ -12528,7 +12715,7 @@ function readSubmissionState(data) {
   return void 0;
 }
 function readGenerationActive(data) {
-  if (!isRecord4(data)) return void 0;
+  if (!isRecord5(data)) return void 0;
   if (typeof data.generationActive === "boolean") return data.generationActive;
   for (const nested of Object.values(data)) {
     const value = readGenerationActive(nested);
@@ -12559,7 +12746,7 @@ function failedCommand(result) {
   }
   return void 0;
 }
-function isRecord4(value) {
+function isRecord5(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
@@ -12647,7 +12834,7 @@ function validateResponsesCreateArgs(args) {
       alternative: 'Use instructionsMode: "visible_prefix" or omit instructionsMode.'
     });
   }
-  if (isRecord5(args.text)) {
+  if (isRecord6(args.text)) {
     const format = args.text.format;
     if (format !== void 0 && (typeof format !== "string" || !responseFormats.has(format))) {
       unsupported2.push({
@@ -12748,7 +12935,7 @@ function apiOnlyField(path3, alternative) {
 function responseId(now) {
   return `chatgpt-browser-${now.getTime().toString(36)}`;
 }
-function isRecord5(value) {
+function isRecord6(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
@@ -13263,7 +13450,7 @@ async function runPlanInvocation(plan, env, limits, defaults, reporting) {
       return maybeAttachReport(env, result, reportOptions(plan.report, reporting), limits);
     }
     if (!("steps" in plan) && plan.name === "redacted-run-report") {
-      const input = isRecord6(plan.input) ? plan.input : {};
+      const input = isRecord7(plan.input) ? plan.input : {};
       const result = input.result;
       if (!isCommandResult2(result)) {
         throw new Error('Named workflow "redacted-run-report" requires input.result to be a CommandResult.');
@@ -13403,7 +13590,7 @@ function planOpenThread(thread) {
   };
 }
 function planByName(name, args, defaults = {}) {
-  const input = isRecord6(args) ? args : {};
+  const input = isRecord7(args) ? args : {};
   switch (name) {
     case "new-ask-read":
       return planAskWorkflow({ prompt: stringInput(input, "prompt"), thread: { type: "new" } }, defaults);
@@ -13466,7 +13653,7 @@ function resultSummary(result) {
   };
 }
 function isCommandResult2(value) {
-  return isRecord6(value) && typeof value.ok === "boolean" && typeof value.status === "string" && Array.isArray(value.warnings) && isRecord6(value.context) && typeof value.context.timestamp === "string";
+  return isRecord7(value) && typeof value.ok === "boolean" && typeof value.status === "string" && Array.isArray(value.warnings) && isRecord7(value.context) && typeof value.context.timestamp === "string";
 }
 function bootstrapStepForWorkflow(thread, existingTab, preferExistingTab) {
   const args = bootstrapArgsForWorkflow(thread, existingTab, preferExistingTab);
@@ -13561,7 +13748,7 @@ function isTypedThread(thread) {
 function normalizeFileInputs(files) {
   return files.map((file) => typeof file === "string" ? file : file.path);
 }
-function isRecord6(value) {
+function isRecord7(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 function stringInput(input, key) {
@@ -13579,167 +13766,26 @@ function arrayInput(input, key) {
   return value;
 }
 
-// src/backend/protocol.ts
-var BACKEND_REQUEST_SCHEMA_VERSION = "chatgpt.browser_control.backend_request.v1";
-var BACKEND_RESPONSE_SCHEMA_VERSION = "chatgpt.browser_control.backend_response.v1";
-var BACKEND_EVENT_SCHEMA_VERSION = "chatgpt.browser_control.backend_event.v1";
-var backendCommands = [
-  "backend.version",
-  "backend.health",
-  "backend.capabilities",
-  "runner.run",
-  "runner.plan",
-  "runner.stream",
-  "responses.create",
-  "ask",
-  "askInThread",
-  "askWithFiles",
-  "askAndDownload",
-  "runMessages",
-  "openThread",
-  "readLatest",
-  "copyLatest",
-  "downloadLatest",
-  "runPlan",
-  "doctor",
-  "createReport",
-  "reports.create",
-  "reports.redact",
-  "reports.summarize",
-  "commands",
-  "describe",
-  "help",
-  "session.bootstrap",
-  "experience.detect",
-  "experience.open",
-  "configuration.inspect",
-  "configuration.apply",
-  "work.start",
-  "work.status",
-  "work.wait",
-  "work.steer",
-  "work.readLatest",
-  "threads.new",
-  "threads.search",
-  "threads.open",
-  "messages.compose",
-  "messages.submit",
-  "messages.ask",
-  "messages.wait",
-  "messages.readLatest",
-  "messages.status",
-  "messages.waitAndRead",
-  "artifacts.listLatest",
-  "artifacts.wait",
-  "artifacts.downloadLatest",
-  "files.preflight",
-  "files.attach",
-  "files.downloadLatest",
-  "projects.sources.list",
-  "projects.sources.planAdd",
-  "projects.sources.add",
-  "modes.set",
-  "modes.get",
-  "tools.select",
-  "response.copy"
-];
-var ProtocolError = class extends Error {
-  constructor(code, message, recoverable) {
-    super(message);
-    this.code = code;
-    this.recoverable = recoverable;
-    this.name = "ProtocolError";
-  }
-  code;
-  recoverable;
-};
-var commandSet = new Set(backendCommands);
-function parseBackendRequest(raw) {
-  if (!isRecord7(raw)) {
-    throw new ProtocolError("invalid_request", "Backend request must be an object.", false);
-  }
-  const schemaVersion = raw.schemaVersion;
-  if (schemaVersion !== BACKEND_REQUEST_SCHEMA_VERSION) {
-    throw new ProtocolError(
-      "unsupported_schema_version",
-      `Unsupported backend request schemaVersion: ${String(schemaVersion)}`,
-      false
-    );
-  }
-  const command = raw.command;
-  if (typeof command !== "string" || !commandSet.has(command)) {
-    throw new ProtocolError("unknown_command", `Unknown backend command: ${String(command)}`, false);
-  }
-  const request = {
-    schemaVersion: BACKEND_REQUEST_SCHEMA_VERSION,
-    command,
-    payload: normalizePayload(raw.payload)
-  };
-  if (raw.requestId !== void 0) {
-    if (typeof raw.requestId !== "string" || raw.requestId.length === 0) {
-      throw new ProtocolError("invalid_request", "Backend request requestId must be a non-empty string when provided.", false);
-    }
-    request.requestId = raw.requestId;
-  }
-  return request;
-}
-function backendResponseOk(requestId, result) {
-  const response = {
-    schemaVersion: BACKEND_RESPONSE_SCHEMA_VERSION,
-    ok: true,
-    result
-  };
-  if (requestId !== void 0) response.requestId = requestId;
-  return response;
-}
-function backendResponseError(requestId, error) {
-  const response = {
-    schemaVersion: BACKEND_RESPONSE_SCHEMA_VERSION,
-    ok: false,
-    error: {
-      code: error instanceof ProtocolError ? error.code : "invalid_request",
-      message: error.message,
-      recoverable: error instanceof ProtocolError ? error.recoverable : false
-    }
-  };
-  if (requestId !== void 0) response.requestId = requestId;
-  return response;
-}
-function backendEvent(requestId, payload) {
-  const event = {
-    schemaVersion: BACKEND_EVENT_SCHEMA_VERSION,
-    ...payload
-  };
-  if (requestId !== void 0) event.requestId = requestId;
-  return event;
-}
-function backendEventCompleted(requestId, result) {
-  return backendEvent(requestId, { type: "completed", result });
-}
-function normalizePayload(value) {
-  if (value === void 0) return {};
-  if (!isRecord7(value)) {
-    throw new ProtocolError("invalid_request", "Backend request payload must be an object when provided.", false);
-  }
-  return value;
-}
-function isRecord7(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
 // src/backend/session.ts
 var BackendSession = class {
-  constructor(options = {}) {
-    this.options = options;
-  }
-  options;
   clientInstance;
+  options;
+  sessionId;
+  browserOperationTail = Promise.resolve();
+  constructor(options = {}) {
+    const { backendSessionId, ...clientOptions } = options;
+    this.options = clientOptions;
+    this.sessionId = backendSessionId ?? randomUUID2();
+  }
   async dispatch(request) {
+    if (!requiresBrowserSerialization(request.command)) {
+      return this.dispatchNow(request);
+    }
+    const release = await this.acquireBrowserOperation();
     try {
-      const result = await dispatchBackendCommand(this.client(), request);
-      return backendResponseOk(request.requestId, result);
-    } catch (error) {
-      return backendResponseError(request.requestId, error instanceof Error ? error : new Error(String(error)));
+      return await this.dispatchNow(request);
+    } finally {
+      release();
     }
   }
   async *stream(request) {
@@ -13753,17 +13799,22 @@ var BackendSession = class {
         }
         return;
       }
-      const payload = request.payload;
-      const agent = this.client().agent(agentConfig(payload));
-      const stream = this.client().runner.run(agent, runInput(payload), { stream: true });
-      for await (const event of stream) {
-        yield backendEvent(request.requestId, {
-          type: "run_item_stream_event",
-          name: event.name,
-          item: event.item
-        });
+      const release = await this.acquireBrowserOperation();
+      try {
+        const payload = request.payload;
+        const agent = this.client().agent(agentConfig(payload));
+        const stream = this.client().runner.run(agent, runInput(payload), { stream: true });
+        for await (const event of stream) {
+          yield backendEvent(request.requestId, {
+            type: "run_item_stream_event",
+            name: event.name,
+            item: event.item
+          });
+        }
+        yield backendEventCompleted(request.requestId, await stream.completed);
+      } finally {
+        release();
       }
-      yield backendEventCompleted(request.requestId, await stream.completed);
     } catch (error) {
       const protocolError = error instanceof ProtocolError ? error : new ProtocolError("invalid_request", error instanceof Error ? error.message : String(error), false);
       yield backendEvent(request.requestId, {
@@ -13780,14 +13831,33 @@ var BackendSession = class {
     this.clientInstance ??= createChatGPT(this.options);
     return this.clientInstance;
   }
+  async dispatchNow(request) {
+    try {
+      const result = await dispatchBackendCommand(this.client(), request, this.sessionId);
+      return backendResponseOk(request.requestId, result);
+    } catch (error) {
+      return backendResponseError(request.requestId, error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+  async acquireBrowserOperation() {
+    const previous = this.browserOperationTail;
+    let release;
+    this.browserOperationTail = new Promise((resolve3) => {
+      release = resolve3;
+    });
+    await previous;
+    return release;
+  }
 };
-async function dispatchBackendCommand(client, request) {
+async function dispatchBackendCommand(client, request, sessionId) {
   const payload = request.payload;
   switch (request.command) {
     case "backend.version":
       return {
         name: "codex-chatgpt-control-backend",
         runtime: "node",
+        packageVersion: PACKAGE_VERSION,
+        sessionId,
         protocolVersion: BACKEND_REQUEST_SCHEMA_VERSION
       };
     case "backend.health":
@@ -13797,7 +13867,7 @@ async function dispatchBackendCommand(client, request) {
         timestamp: (/* @__PURE__ */ new Date()).toISOString()
       };
     case "backend.capabilities":
-      return backendCapabilities();
+      return backendCapabilities(sessionId);
     case "runner.run": {
       const agent = client.agent(agentConfig(payload));
       return client.runner.run(agent, runInput(payload));
@@ -13924,16 +13994,40 @@ async function dispatchBackendCommand(client, request) {
       return client.response.copy(emptyToUndefined(payload));
   }
 }
-function backendCapabilities() {
+function backendCapabilities(sessionId) {
   return {
     protocolVersion: BACKEND_REQUEST_SCHEMA_VERSION,
+    packageVersion: PACKAGE_VERSION,
+    sessionId,
     commands: [...backendCommands],
     transports: ["stdio"],
     streaming: {
       modes: ["ndjson"],
       tokenDeltas: false
+    },
+    execution: {
+      browserCommands: "serialized_per_session",
+      correlation: "requestId",
+      tabAffinity: "enforced_after_bootstrap",
+      subagentRuntime: "bootstrap_per_agent"
     }
   };
+}
+var NON_BROWSER_COMMANDS = /* @__PURE__ */ new Set([
+  "backend.version",
+  "backend.health",
+  "backend.capabilities",
+  "runner.plan",
+  "files.preflight",
+  "projects.sources.planAdd",
+  "reports.redact",
+  "reports.summarize",
+  "commands",
+  "describe",
+  "help"
+]);
+function requiresBrowserSerialization(command) {
+  return !NON_BROWSER_COMMANDS.has(command);
 }
 function agentConfig(payload) {
   return requiredRecord(payload, "agent");

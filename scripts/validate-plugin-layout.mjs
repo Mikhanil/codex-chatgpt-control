@@ -165,6 +165,16 @@ async function main() {
   assert(delegateSkill.includes("../../runtime/import-chatgpt-control.mjs"), "Delegate skill must use plugin runtime loader");
   assert(proSkill.includes("../../runtime/import-chatgpt-control.mjs"), "Pro skill must use plugin runtime loader");
   assert(!proSkill.includes("~/.codex/skills/"), "Pro skill must not depend on an installed skill runtime");
+  assert(broadSkill.includes("Each agent or subagent must bootstrap its own JavaScript runtime"), "Broad skill must define per-agent runtime ownership");
+  assert(broadSkill.includes("serialized browser commands" ) || broadSkill.includes("serializes browser commands"), "Broad skill must define backend browser serialization");
+  assert(broadSkill.includes("expectedPackageVersion") && broadSkill.includes("expectedProtocolVersion"), "Broad skill must define the runtime version handshake");
+  assert(broadSkill.includes(`expectedPackageVersion: "${releasePackage.version}"`), "Broad skill runtime handshake version must match the release package");
+  assert(delegateSkill.includes("isolated runtimes, clients, and tabs"), "Delegate skill must define parallel delegation isolation");
+  assert(proSkill.includes("one in-flight browser operation per claimed tab"), "Pro skill must define per-tab concurrency");
+
+  const bridgeBootstrap = await readFile(path.join(skillRoot, "codex-chatgpt-control/references/bridge-bootstrap.md"), "utf8");
+  assert(bridgeBootstrap.includes("currently installed Browser or Chrome control skill"), "Bridge bootstrap must defer to the current host control skill contract");
+  assert(bridgeBootstrap.includes("Never copy `globalThis.agent`"), "Bridge bootstrap must prohibit cross-agent handle reuse");
 
   const agentMetadata = await readFile(path.join(pluginRoot, "agents/openai.yaml"), "utf8");
   assert(agentMetadata.includes('$codex-chatgpt-control'), "agents/openai.yaml default_prompt must explicitly invoke $codex-chatgpt-control");

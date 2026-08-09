@@ -25,6 +25,10 @@ This skill is for visible, user-directed ChatGPT workflows only. It is not an Op
 
 ## Runtime Requirements
 
+Each agent or subagent owns a separate JavaScript runtime. It must load and bootstrap the SDK itself; globals, imported modules, clients, browser/page handles, and tab claims are never inherited from another agent.
+
+Run `doctor({ check: ["runtime"], expectedPackageVersion: "0.5.1-alpha.1", expectedProtocolVersion: "chatgpt.browser_control.backend_request.v1" })` before a live workflow. Backend sessions expose `sessionId`, correlate with `requestId`, and serialize browser commands. Direct SDK callers must keep one browser operation in flight per claimed tab; parallel work requires isolated runtimes, clients, and tabs.
+
 Deterministic local checks need:
 
 - Node.js 20 or newer

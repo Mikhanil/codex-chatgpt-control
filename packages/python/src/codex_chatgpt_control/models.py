@@ -298,9 +298,12 @@ class CommandDescriptor(WireModel):
 
 class BackendCapabilities(WireModel):
     protocol_version: str = Field(alias="protocolVersion")
+    package_version: str = Field(alias="packageVersion")
+    session_id: str = Field(alias="sessionId")
     commands: list[str]
     transports: list[str]
     streaming: dict[str, Any]
+    execution: dict[str, Any]
 
 
 class BackendResponse(WireModel):

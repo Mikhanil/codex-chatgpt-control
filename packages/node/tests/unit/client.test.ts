@@ -352,6 +352,54 @@ describe("createChatGPT", () => {
     expect(result.data?.checks).not.toHaveProperty("reports");
   });
 
+  it("doctor reports the runtime contract without bootstrapping a browser", async () => {
+    const chatgpt = createChatGPT({ now: () => new Date("2026-06-06T00:00:00.000Z") });
+
+    const result = await chatgpt.doctor({
+      check: ["runtime"],
+      expectedPackageVersion: "0.5.1-alpha.1",
+      expectedProtocolVersion: "chatgpt.browser_control.backend_request.v1"
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.data).toMatchObject({
+      ready: true,
+      checks: {
+        runtime: {
+          status: "ok",
+          details: {
+            packageVersion: "0.5.1-alpha.1",
+            protocolVersion: "chatgpt.browser_control.backend_request.v1",
+            executionSurface: "ordinary_process",
+            bootstrapRequired: true,
+            browserCommands: "caller_serialized",
+            correlation: "backend_request_id",
+            subagentRuntime: "bootstrap_per_agent"
+          }
+        }
+      }
+    });
+  });
+
+  it("doctor blocks an incompatible runtime version", async () => {
+    const chatgpt = createChatGPT();
+
+    const result = await chatgpt.doctor({
+      check: ["runtime"],
+      expectedPackageVersion: "9.9.9"
+    });
+
+    expect(result.data).toMatchObject({
+      ready: false,
+      checks: {
+        runtime: {
+          status: "unsupported",
+          code: "runtime_version_mismatch"
+        }
+      }
+    });
+  });
+
   it("doctor explains ordinary-shell bridge blockers and live bootstrap recovery", async () => {
     const chatgpt = createChatGPT({ now: () => new Date("2026-06-06T00:00:00.000Z") });
 
@@ -362,7 +410,7 @@ describe("createChatGPT", () => {
       status: "blocked",
       message: expect.stringContaining("ordinary shell")
     });
-    expect(result.data?.checks.bridge?.message).toContain("setupBrowserRuntime");
+    expect(result.data?.checks.bridge?.message).toContain("Browser or Chrome control skill");
     expect(result.data?.checks.bridge?.remediation?.join(" ")).toContain("scripts/http_stdio_relay.mjs");
   });
 

@@ -66,6 +66,20 @@ class BackendClientTests(unittest.TestCase):
         self.assertEqual(events[-1]["type"], "completed")
         self.assertEqual(transport.requests[0]["command"], "runner.stream")
 
+    def test_version_exposes_backend_handshake_with_request_correlation(self) -> None:
+        transport = RecordingBackendTransport({
+            "packageVersion": "0.5.1-alpha.1",
+            "protocolVersion": "chatgpt.browser_control.backend_request.v1",
+            "sessionId": "session-test",
+        })
+        client = BackendClient(transport=transport)
+
+        version = client.version()
+
+        self.assertEqual(version["sessionId"], "session-test")
+        self.assertEqual(transport.requests[0]["command"], "backend.version")
+        self.assertEqual(transport.requests[0]["requestId"], "py_req_1")
+
 
 if __name__ == "__main__":
     unittest.main()

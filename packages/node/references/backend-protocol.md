@@ -195,13 +195,23 @@ Other supported targets are `{ "type": "url", "url": "https://chatgpt.com/c/..."
 ```json
 {
   "protocolVersion": "chatgpt.browser_control.backend_request.v1",
+  "packageVersion": "0.5.1-alpha.1",
+  "sessionId": "<backend-session-id>",
   "transports": ["stdio"],
   "streaming": {
     "modes": ["ndjson"],
     "tokenDeltas": false
+  },
+  "execution": {
+    "browserCommands": "serialized_per_session",
+    "correlation": "requestId",
+    "tabAffinity": "enforced_after_bootstrap",
+    "subagentRuntime": "bootstrap_per_agent"
   }
 }
 ```
+
+Each backend session serializes browser-touching commands for its claimed tab while lifecycle and other browser-free commands remain responsive. Direct in-process SDK callers must provide the same serialization. Parallel browser work requires separate runtimes, clients, and tabs.
 
 ## HTTP/SSE Status
 
@@ -227,14 +237,16 @@ For live browser control, the backend process must have access to a compatible b
 - Explicit `RuntimeEnv.browser` or `RuntimeEnv.page` in a future embedding.
 - A future Python-native/native-host/CDP backend that implements this same protocol.
 
-Important: in Codex, `globalThis.agent` is not present until the Chrome plugin runtime is bootstrapped. Do not diagnose bridge availability by checking `globalThis.agent` in an ordinary shell or before calling the Chrome plugin's `setupBrowserRuntime({ globals: globalThis })`.
+Important: in Codex, `globalThis.agent` may be absent until the browser-control runtime is bootstrapped. Read and follow the currently installed Browser or Chrome control skill because that host owns the bridge module path, setup signature, and browser acquisition API. Do not copy globals or browser/page handles from another agent: every agent and subagent must bootstrap its own JavaScript runtime.
 
-The live Chrome bootstrap is:
+After loading this package, verify runtime compatibility without opening a page:
 
 ```js
-const { setupBrowserRuntime } = await import("/example/user/.codex/plugins/cache/openai-bundled/chrome/latest/scripts/browser-client.mjs");
-await setupBrowserRuntime({ globals: globalThis });
-globalThis.browser = await agent.browsers.get("extension");
+await chatgpt.doctor({
+  check: ["runtime"],
+  expectedPackageVersion: "0.5.1-alpha.1",
+  expectedProtocolVersion: "chatgpt.browser_control.backend_request.v1"
+});
 ```
 
 ## Ordinary-Shell Smoke

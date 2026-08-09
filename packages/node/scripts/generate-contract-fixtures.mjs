@@ -491,7 +491,7 @@ async function loadBuiltSdk() {
 }
 
 async function backendResponse(command, payload = {}, options = {}) {
-  const session = new BackendSession({ now: () => FIXED_DATE, ...options });
+  const session = new BackendSession({ backendSessionId: "<backend-session-id>", now: () => FIXED_DATE, ...options });
   return normalizeFixtureValue(await session.dispatch(backendRequest(command, payload)));
 }
 
@@ -504,7 +504,7 @@ async function backendResult(command, payload = {}, options = {}) {
 }
 
 async function backendStream(command, payload = {}, options = {}) {
-  const session = new BackendSession({ now: () => FIXED_DATE, ...options });
+  const session = new BackendSession({ backendSessionId: "<backend-session-id>", now: () => FIXED_DATE, ...options });
   const events = [];
   for await (const event of session.stream(backendRequest(command, payload))) {
     events.push(normalizeFixtureValue(event));

@@ -59,7 +59,15 @@
     "tools.select",
     "response.copy"
   ],
+  "execution": {
+    "browserCommands": "serialized_per_session",
+    "correlation": "requestId",
+    "subagentRuntime": "bootstrap_per_agent",
+    "tabAffinity": "enforced_after_bootstrap"
+  },
+  "packageVersion": "0.5.1-alpha.1",
   "protocolVersion": "chatgpt.browser_control.backend_request.v1",
+  "sessionId": "<backend-session-id>",
   "streaming": {
     "modes": [
       "ndjson"

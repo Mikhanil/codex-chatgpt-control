@@ -88,6 +88,9 @@ class CompleteModelTests(unittest.TestCase):
         version = BackendResponse.from_wire(load_json("backend-version.json"))
 
         self.assertEqual(capabilities.protocol_version, "chatgpt.browser_control.backend_request.v1")
+        self.assertEqual(capabilities.package_version, "0.5.1-alpha.1")
+        self.assertEqual(capabilities.session_id, "<backend-session-id>")
+        self.assertEqual(capabilities.execution["browserCommands"], "serialized_per_session")
         self.assertIn("stdio", capabilities.transports)
         self.assertTrue(version.ok)
         self.assertEqual(version.result["runtime"], "node")

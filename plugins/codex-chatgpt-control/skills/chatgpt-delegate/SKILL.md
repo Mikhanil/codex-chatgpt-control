@@ -11,6 +11,10 @@ This is a workflow over the `codex-chatgpt-control` plugin. It operates visible 
 
 ## Runtime Loader
 
+Each agent or subagent must initialize its own bridge-enabled JavaScript runtime and load this plugin runtime itself. Do not reuse another agent's globals, SDK client, browser/page handles, or claimed tab. Before live delegation, run the broad skill's `doctor({ check: ["runtime"] })` version handshake.
+
+For one runtime and claimed tab, allow only one in-flight browser operation. Preserve backend `sessionId` and `requestId`, plus the visible task/thread URL. Intentional parallel delegation requires isolated runtimes, clients, and tabs.
+
 Resolve relative paths from this `SKILL.md`. Load the plugin-bundled runtime:
 
 ```js

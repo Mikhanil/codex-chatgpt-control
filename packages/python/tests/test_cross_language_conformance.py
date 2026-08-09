@@ -189,7 +189,7 @@ class CrossLanguageConformanceTests(unittest.TestCase):
                             "warnings": ["contains sensitive preview"],
                             "blocker": {
                                 "kind": "browser_bridge_unavailable",
-                                "message": "Codex cannot access the ChatGPT browser bridge from this backend process. In an ordinary shell this is expected; for a live Codex Chrome run, bootstrap the Chrome plugin runtime with setupBrowserRuntime({ globals: globalThis }) before using globalThis.agent.",
+                                "message": "Codex cannot access the ChatGPT browser bridge from this backend process. In an ordinary shell this is expected; for a live run, bootstrap this agent's own JavaScript runtime by following the currently installed Browser or Chrome control skill before using globalThis.agent.",
                                 "visibleText": "private@example.com",
                             },
                             "context": {"timestamp": "2026-06-06T00:00:00.000Z"},
@@ -274,6 +274,8 @@ def normalize_dynamic(value: Any, key: str | None = None) -> Any:
             for item_key, item_value in sorted(value.items())
         }
     if isinstance(value, str):
+        if key == "sessionId":
+            return "<backend-session-id>"
         if key in {"timestamp", "startedAt", "endedAt", "createdAt"} and ISO_RE.fullmatch(value):
             return "<iso-timestamp>"
         if key == "id" and value.startswith("chatgpt-browser-"):

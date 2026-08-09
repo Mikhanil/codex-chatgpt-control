@@ -199,12 +199,12 @@ describe("blocker explanations", () => {
     expect(explanation.category).toBe("environment");
     expect(explanation.remediation.map(step => step.label)).toEqual([
       "Ordinary shell",
-      "Codex Chrome bootstrap",
+      "Codex browser bootstrap",
       "Python live bridge",
       "Extension availability"
     ]);
     expect(explanation.markdown).toContain("Ordinary shell");
-    expect(explanation.markdown).toContain("setupBrowserRuntime");
+    expect(explanation.markdown).toContain("Browser or Chrome control skill");
   });
 
   it("renders existing-tab diagnostics without page or chat content", () => {
