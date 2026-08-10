@@ -198,6 +198,17 @@ await chatgpt.askInThread({
 });
 ```
 
+To start Work inside a specific ChatGPT Project, pass its canonical visible
+project URL. The SDK verifies the project identifier in the page URL before it
+opens the Work surface:
+
+```ts
+await chatgpt.work.start({
+  prompt: "Summarize the open tasks.",
+  projectUrl: "https://chatgpt.com/g/g-p-example/project"
+});
+```
+
 If you run browser-required commands from an ordinary shell, the safe expected result is a structured `browser_bridge_unavailable` blocker. That means the protocol path is working, but no visible browser bridge was available to the process.
 
 Download an image-only generation through the artifact primitives:

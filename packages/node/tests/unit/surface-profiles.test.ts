@@ -35,6 +35,14 @@ const fixtureNames = [
 ] as const;
 
 describe("sanitized Chat and Work surface profiles", () => {
+  it("handles a partial surface snapshot without throwing", () => {
+    expect(detectExperienceFromSnapshot({
+      composerLabels: [],
+      mainControls: [],
+      mainText: ""
+    })).toMatchObject({ experience: "unknown", selectorProfile: "unknown", confidence: "low" });
+  });
+
   for (const fixtureName of fixtureNames) {
     it(`detects and inspects ${fixtureName}`, async () => {
       const fixture = await readSurfaceFixture(fixtureName);

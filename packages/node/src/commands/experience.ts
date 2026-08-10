@@ -19,7 +19,7 @@ import { contextFromPage } from "./context.js";
 import { ensurePage } from "./session.js";
 
 type SurfaceSnapshot = {
-  url: string;
+  url?: string;
   composerLabels: string[];
   mainControls: string[];
   mainText: string;
@@ -193,7 +193,7 @@ export function detectExperienceFromSnapshot(snapshot: SurfaceSnapshot): DetectE
   const controls = snapshot.mainControls.map(normalizeForLabelMatch);
   const mainText = normalizeForLabelMatch(snapshot.mainText);
   const selectedSurfaceLabels = (snapshot.selectedSurfaceLabels ?? []).map(normalizeForLabelMatch);
-  const url = snapshot.url.toLowerCase();
+  const url = (snapshot.url ?? "").toLowerCase();
 
   const selectedWork = matchingLabels(selectedSurfaceLabels, localeLabels.experienceOptions.work);
   const selectedChat = matchingLabels(selectedSurfaceLabels, localeLabels.experienceOptions.chat);
@@ -237,7 +237,7 @@ export function detectExperienceFromSnapshot(snapshot: SurfaceSnapshot): DetectE
   }
 
   if (/\/work(?:\/|$|\?)/.test(url)) {
-    evidence.push({ source: "url", label: snapshot.url });
+    evidence.push({ source: "url", label: snapshot.url ?? CHATGPT_HOME });
   }
   if (containsAny(mainText, ["work on something else", "work on anything"])) {
     evidence.push({ source: "heading", label: "Work composer copy" });

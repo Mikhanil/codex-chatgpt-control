@@ -484,6 +484,14 @@ export type ProjectSourcesUrl = {
   url: string;
 };
 
+/** Selects a visible ChatGPT Project by its canonical project URL. */
+export type ProjectSelectArgs = {
+  projectUrl: string;
+  timeoutMs?: number;
+};
+
+export type ProjectSelectData = ProjectSourcesUrl;
+
 export type ProjectSourcesListArgs = {
   projectUrl: string;
   existingTab?: boolean | ExistingTabPolicy;
@@ -812,6 +820,8 @@ export type StartWorkArgs = {
   newTask?: boolean;
   files?: string[];
   configuration?: ConfigurationSelection;
+  /** Canonical ChatGPT Project URL. The selected project is verified before Work starts. */
+  projectUrl?: string;
   wait?: boolean | WaitArgs;
   read?: boolean | ReadLatestArgs;
   timeoutMs?: number;
