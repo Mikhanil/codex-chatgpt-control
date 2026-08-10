@@ -23,6 +23,7 @@ import { listLatestArtifacts } from "./artifacts.js";
 import { applyConfiguration } from "./configuration.js";
 import { contextFromPage } from "./context.js";
 import { openExperience, detectExperience } from "./experience.js";
+import { selectProject } from "./project-select.js";
 import { attachFiles } from "./files.js";
 import {
   askMessage,
@@ -64,6 +65,15 @@ export async function startWork(
   const page = env.page!;
 
   try {
+    if (args.projectUrl !== undefined) {
+      const project = await selectProject(env, {
+        projectUrl: args.projectUrl,
+        ...(args.timeoutMs === undefined ? {} : { timeoutMs: args.timeoutMs })
+      });
+      if (!project.ok) {
+        return forwardCommandFailure(project);
+      }
+    }
     const surface = await openExperience(env, {
       experience: "work",
       ...(args.timeoutMs === undefined ? {} : { timeoutMs: args.timeoutMs })

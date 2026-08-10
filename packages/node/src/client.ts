@@ -31,6 +31,8 @@ import type {
   ProjectSourcesListArgs,
   ProjectSourcesListData,
   ProjectSourcesPlanAddArgs,
+  ProjectSelectArgs,
+  ProjectSelectData,
   ReadLatestArgs,
   RuntimeEnv,
   ReadWorkLatestArgs,
@@ -54,6 +56,7 @@ import type {
 import { downloadLatestArtifact, listLatestArtifacts, waitForArtifact } from "./commands/artifacts.js";
 import { attachFiles, downloadLatestFile, preflightFiles } from "./commands/files.js";
 import { addProjectSources, buildProjectSourceAddPlan, listProjectSources } from "./commands/project-sources.js";
+import { selectProject } from "./commands/project-select.js";
 import { doctor, type DoctorArgs, type DoctorReport } from "./commands/doctor.js";
 import { askMessage, composeMessage, messageStatus, readLatest, submitMessage, waitAndRead, waitForMessage } from "./commands/messages.js";
 import { getMode, selectTool, setMode } from "./commands/modes.js";
@@ -253,6 +256,7 @@ export type ChatGPTClient = {
     downloadLatest(args: DownloadLatestArgs): Promise<CommandResult<unknown>>;
   };
   projects: {
+    select(args: ProjectSelectArgs): Promise<CommandResult<ProjectSelectData>>;
     sources: {
       list(args: ProjectSourcesListArgs): Promise<CommandResult<ProjectSourcesListData>>;
       planAdd(args: ProjectSourcesPlanAddArgs): Promise<CommandResult<ProjectSourcesAddPlanData>>;
@@ -355,6 +359,7 @@ export function createChatGPT(options: ChatGPTClientOptions = {}): ChatGPTClient
       downloadLatest: args => downloadLatestFile(env, args)
     },
     projects: {
+      select: args => selectProject(env, args),
       sources: {
         list: args => listProjectSources(env, args),
         planAdd: args => buildProjectSourceAddPlan(env, args),

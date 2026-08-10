@@ -240,7 +240,7 @@ export function buildSurfaceProfileDraft(
     workspaceScope: options.workspaceScope,
     supportState: options.supportState,
     snapshot: {
-      url: sanitizeChatGPTUrl(snapshot.url),
+      url: sanitizeChatGPTUrl(snapshot.url ?? ""),
       composerLabels: safeComposerLabels,
       mainControls: safeMainControls,
       mainText: detected.evidence
