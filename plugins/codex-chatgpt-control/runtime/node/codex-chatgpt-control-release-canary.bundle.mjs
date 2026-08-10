@@ -2067,7 +2067,7 @@ var ml = {
 var ru = {
   configurationAxes: {
     model: ["\u041C\u043E\u0434\u0435\u043B\u044C"],
-    effort: ["\u0423\u0440\u043E\u0432\u0435\u043D\u044C"],
+    effort: ["\u0423\u0440\u043E\u0432\u0435\u043D\u044C \u043F\u0440\u043E\u0440\u0430\u0431\u043E\u0442\u043A\u0438", "\u0423\u0440\u043E\u0432\u0435\u043D\u044C"],
     speed: ["\u0421\u043A\u043E\u0440\u043E\u0441\u0442\u044C"]
   },
   configurationOptions: {
@@ -4742,6 +4742,7 @@ function detectExperienceFromSnapshot(snapshot) {
   const mainText = normalizeForLabelMatch(snapshot.mainText);
   const selectedSurfaceLabels = (snapshot.selectedSurfaceLabels ?? []).map(normalizeForLabelMatch);
   const url = (snapshot.url ?? "").toLowerCase();
+  const projectChatComposer = isProjectSurfaceUrl(url) && (snapshot.hasComposerTextbox ?? snapshot.composerLabels.length > 0);
   const selectedWork = matchingLabels(selectedSurfaceLabels, localeLabels.experienceOptions.work);
   const selectedChat = matchingLabels(selectedSurfaceLabels, localeLabels.experienceOptions.chat);
   const workSurfaceSelected = selectedWork.length > 0 && selectedChat.length === 0;
@@ -4758,6 +4759,9 @@ function detectExperienceFromSnapshot(snapshot) {
   const chatComposer = matchingLabels(composerLabels, localeLabels.composerTextbox);
   for (const label of chatComposer) {
     evidence.push({ source: "composer", label });
+  }
+  if (projectChatComposer) {
+    evidence.push({ source: "composer", label: "ChatGPT Project composer" });
   }
   const workAxisCount = ["model", "effort", "speed"].filter((axis) => hasAnyLabel(controls, localeLabels.configurationAxes[axis])).length;
   if (workAxisCount >= 2) {
@@ -4783,7 +4787,7 @@ function detectExperienceFromSnapshot(snapshot) {
     evidence.push({ source: "heading", label: "Work composer copy" });
   }
   const workScore = workComposer.length * 4 + (workSurfaceSelected ? 10 : 0) + (workAxisCount >= 2 ? 4 : 0) + (workConfigurationOpener ? 6 : 0) + (/\/work(?:\/|$|\?)/.test(url) ? 3 : 0) + (containsAny(mainText, ["work on something else", "work on anything"]) ? 2 : 0);
-  const chatScore = chatComposer.length * 4 + (chatSurfaceSelected ? 10 : 0);
+  const chatScore = chatComposer.length * 4 + (chatSurfaceSelected ? 10 : 0) + (projectChatComposer ? 12 : 0);
   let experience = "unknown";
   let confidence = "low";
   if (workScore > chatScore && workScore >= 4) {
@@ -4795,6 +4799,9 @@ function detectExperienceFromSnapshot(snapshot) {
   }
   const selectorProfile = profileFromSnapshot(snapshot, experience);
   return { experience, selectorProfile, confidence, evidence };
+}
+function isProjectSurfaceUrl(url) {
+  return /\/g\/g-p-[^/]+\/project(?:[/?#]|$)/i.test(url);
 }
 async function readSurfaceSnapshot(page) {
   const url = typeof page.url === "function" ? await Promise.resolve(page.url()).catch(() => "") : "";
@@ -4833,7 +4840,8 @@ async function readSurfaceSnapshot(page) {
       root,
       ...Array.from(root.querySelectorAll("textarea, [contenteditable='true'], [role='textbox'], input"))
     ]);
-    const composerLabels = Array.from(new Set(composerNodes.filter(visible).map(labelFor).map(normalize2).filter(Boolean))).slice(0, 16);
+    const visibleComposerNodes = composerNodes.filter(visible);
+    const composerLabels = Array.from(new Set(visibleComposerNodes.map(labelFor).map(normalize2).filter(Boolean))).slice(0, 16);
     const main2 = document.querySelector("main");
     const overlayRoots = Array.from(document.querySelectorAll(
       "[role='menu'], [role='listbox'], [data-radix-popper-content-wrapper], [data-radix-menu-content]"
@@ -4850,11 +4858,14 @@ async function readSurfaceSnapshot(page) {
     const selectedSurfaceLabels = Array.from(new Set(Array.from(document.querySelectorAll(
       "[role='radio'][aria-checked='true'], [role='radio'][data-state='checked'], input[type='radio']:checked"
     )).filter(visible).map(labelFor).map(normalize2).filter((label) => wantedSurfaceLabels.has(normalizeComparable(label))))).slice(0, 4);
-    return { composerLabels, mainControls, mainText, selectedSurfaceLabels };
+    const hasComposerTextbox = visibleComposerNodes.some((node) => node.matches(
+      "textarea, [contenteditable='true'], [role='textbox'], input"
+    ));
+    return { composerLabels, hasComposerTextbox, mainControls, mainText, selectedSurfaceLabels };
   }, [
     ...localeLabels.experienceOptions.chat,
     ...localeLabels.experienceOptions.work
-  ]).catch(() => ({ composerLabels: [], mainControls: [], mainText: "", selectedSurfaceLabels: [] }));
+  ]).catch(() => ({ composerLabels: [], hasComposerTextbox: false, mainControls: [], mainText: "", selectedSurfaceLabels: [] }));
   return { url, ...snapshot };
 }
 function profileFromSnapshot(snapshot, experience) {
@@ -5677,7 +5688,7 @@ async function inspectConfiguration(env, args = {}) {
       panel,
       rootItems
     );
-    if (args.includeOptions !== false && experience === "work" && panel.axisRows.length > 0) {
+    if (args.includeOptions !== false && (experience === "work" || experience === "chat") && panel.axisRows.length > 0) {
       for (const axis of WORK_AXES) {
         if (!data.availableAxes.includes(axis)) continue;
         const options = await inspectWorkAxisOptions(env, axis);
@@ -5771,7 +5782,7 @@ async function applyConfiguration(env, args) {
         selected.push({ axis, requested, selected: active });
         continue;
       }
-      const selection = before.experience === "work" ? await selectWorkAxis(env, axis, requested) : await selectChatAxis(env, axis, requested, args.timeoutMs);
+      const selection = before.experience === "work" || before.experience === "chat" && ["model", "effort", "speed"].includes(axis) && before.availableAxes.includes(axis) ? await selectWorkAxis(env, axis, requested) : await selectChatAxis(env, axis, requested, args.timeoutMs);
       if (selection === void 0) {
         return configurationFailure(
           page,
@@ -5837,23 +5848,32 @@ function configurationInspectionFromSurface(experience, detectedProfile, evidenc
     }
     selectorProfile = panel.advancedVisible ? "work_advanced_v1" : "work_basic_v1";
   } else if (experience === "chat") {
-    const simplified = chatMenuLooksSimplified(menuItems);
-    selectorProfile = simplified ? "chat_simplified_v1" : detectedProfile;
-    const axis = simplified ? "intelligence" : "effort";
-    if (menuItems.length > 0 || panel.openerLabel !== void 0) {
-      availableAxes.push(axis);
-    }
-    if (panel.openerLabel !== void 0) {
-      active[axis] = panel.openerLabel;
-    }
-    const chatOptions = menuItems.filter((item) => !isConfigurationAxisRow(item.label)).map(menuItemToOption);
-    if (chatOptions.length > 0) {
-      options[axis] = chatOptions;
-    }
-    const modelRows = menuItems.filter((item) => /^gpt[\s-]/i.test(item.label) || item.hasPopup === true);
-    if (modelRows.length > 0) {
-      availableAxes.push("modelVersion");
-      options.modelVersion = modelRows.map(menuItemToOption);
+    const chatAxisRows = panel.axisRows.filter((row) => row.axis === "model" || row.axis === "effort");
+    if (chatAxisRows.length > 0) {
+      selectorProfile = "chat_simplified_v1";
+      for (const row of chatAxisRows) {
+        if (!availableAxes.includes(row.axis)) availableAxes.push(row.axis);
+        if (row.value !== void 0 && row.value.length > 0) active[row.axis] = row.value;
+      }
+    } else {
+      const simplified = chatMenuLooksSimplified(menuItems);
+      selectorProfile = simplified ? "chat_simplified_v1" : detectedProfile;
+      const axis = simplified ? "intelligence" : "effort";
+      if (menuItems.length > 0 || panel.openerLabel !== void 0) {
+        availableAxes.push(axis);
+      }
+      if (panel.openerLabel !== void 0) {
+        active[axis] = panel.openerLabel;
+      }
+      const chatOptions = menuItems.filter((item) => !isConfigurationAxisRow(item.label)).map(menuItemToOption);
+      if (chatOptions.length > 0) {
+        options[axis] = chatOptions;
+      }
+      const modelRows = menuItems.filter((item) => /^gpt[\s-]/i.test(item.label) || item.hasPopup === true);
+      if (modelRows.length > 0) {
+        availableAxes.push("modelVersion");
+        options.modelVersion = modelRows.map(menuItemToOption);
+      }
     }
   }
   return {
@@ -6130,14 +6150,16 @@ async function readConfigurationPanel(page) {
   if (typeof page.evaluate !== "function") {
     return { axisRows: [], advancedVisible: false };
   }
-  return page.evaluate((axisLabels) => {
+  return page.evaluate((labels) => {
     const normalize2 = (value) => value.replace(/\s+/g, " ").trim();
     const normalizedAxes = Object.fromEntries(
-      Object.entries(axisLabels).map(([axis, labels]) => [
+      Object.entries(labels.axes).map(([axis, axisLabels]) => [
         axis,
-        labels.map((label) => normalize2(label).toLocaleLowerCase())
+        axisLabels.map((label) => normalize2(label).toLocaleLowerCase())
       ])
     );
+    const normalizedOpenerLabels = new Set(labels.openerLabels.map((label) => normalize2(label).toLocaleLowerCase()));
+    const normalizedEffortOptions = new Set(labels.effortOptionLabels.map((label) => normalize2(label).toLocaleLowerCase()));
     const visible = (element) => {
       const html = element;
       const rect = html.getBoundingClientRect?.();
@@ -6167,15 +6189,22 @@ async function readConfigurationPanel(page) {
       const html = row;
       const label = normalize2(row.getAttribute("aria-label") ?? html.innerText ?? row.textContent ?? "");
       const normalized = label.toLocaleLowerCase();
+      const hasSubmenu = row.getAttribute("aria-haspopup") === "menu";
       for (const axis of ["model", "intelligence", "effort", "speed"]) {
         const candidates = normalizedAxes[axis] ?? [];
-        const prefix = candidates.find((candidate) => normalized === candidate || normalized.startsWith(`${candidate} `));
+        const prefix = candidates.filter((candidate) => normalized === candidate || normalized.startsWith(`${candidate} `)).sort((left, right) => right.length - left.length)[0];
         if (prefix === void 0) continue;
         const value = normalize2(label.slice(prefix.length));
         const item = { axis, label };
         if (value.length > 0) item.value = value;
         axisRows.push(item);
         break;
+      }
+      if (axisRows.some((item) => item.label === label)) continue;
+      if (hasSubmenu && /\b(?:gpt[\s-]?\d|sol|luna|terra)\b/i.test(label)) {
+        axisRows.push({ axis: "model", label, value: label });
+      } else if (hasSubmenu && normalizedEffortOptions.has(normalized)) {
+        axisRows.push({ axis: "effort", label, value: label });
       }
     }
     const composerRoots = Array.from(document.querySelectorAll(
@@ -6194,7 +6223,7 @@ async function readConfigurationPanel(page) {
         label: normalize2(control.getAttribute("aria-label") ?? html.innerText ?? control.textContent ?? ""),
         testId: control.getAttribute("data-testid") ?? ""
       };
-    }).filter((item) => !/send|voice|microphone|attach|upload|add files|plus/i.test(`${item.label} ${item.testId}`)).filter((item) => /model-switcher|model-selector|mode-selector/i.test(item.testId) || /\b(?:gpt|sol|luna|terra|instant|medium|high|extra high|pro|thinking|extended|light|standard|fast)\b/i.test(item.label));
+    }).filter((item) => !/send|voice|microphone|attach|upload|add files|plus/i.test(`${item.label} ${item.testId}`)).filter((item) => /model-switcher|model-selector|mode-selector/i.test(item.testId) || normalizedOpenerLabels.has(item.label.toLocaleLowerCase()) || /\b(?:gpt|sol|luna|terra|instant|medium|high|extra high|pro|thinking|extended|light|standard|fast)\b/i.test(item.label));
     const result = {
       axisRows,
       advancedVisible: axisRows.length > 0
@@ -6203,7 +6232,21 @@ async function readConfigurationPanel(page) {
       result.openerLabel = openerCandidates[0].label;
     }
     return result;
-  }, localeLabels.configurationAxes).catch(() => ({ axisRows: [], advancedVisible: false }));
+  }, {
+    axes: localeLabels.configurationAxes,
+    openerLabels: [
+      ...Object.values(localeLabels.configurationOptions).flat(),
+      ...Object.values(localeLabels.modeOptions).flat()
+    ],
+    effortOptionLabels: [
+      ...localeLabels.configurationOptions.light,
+      ...localeLabels.configurationOptions.medium,
+      ...localeLabels.configurationOptions.high,
+      ...localeLabels.configurationOptions.extraHigh,
+      ...localeLabels.configurationOptions.max,
+      ...localeLabels.configurationOptions.ultra
+    ]
+  }).catch(() => ({ axisRows: [], advancedVisible: false }));
 }
 async function findWorkAxisRow(page, axis) {
   const labels = axis === "modelVersion" ? [] : localeLabels.configurationAxes[axis] ?? [];
@@ -6211,6 +6254,15 @@ async function findWorkAxisRow(page, axis) {
     const pattern = new RegExp(`^${escapeRegExp3(label)}(?:\\s|$)`, "i");
     for (const role of ["button", "menuitem"]) {
       const locator = page.getByRole?.(role, { name: pattern });
+      if (locator?.count !== void 0 && await locator.count().catch(() => 0) === 1) {
+        return locator;
+      }
+    }
+  }
+  const panelRow = (await readConfigurationPanel(page)).axisRows.filter((row) => row.axis === axis);
+  if (panelRow.length === 1) {
+    for (const role of ["button", "menuitem"]) {
+      const locator = page.getByRole?.(role, { name: panelRow[0].label, exact: true });
       if (locator?.count !== void 0 && await locator.count().catch(() => 0) === 1) {
         return locator;
       }

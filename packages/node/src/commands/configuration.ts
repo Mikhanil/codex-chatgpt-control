@@ -104,7 +104,9 @@ export async function inspectConfiguration(
       rootItems
     );
 
-    if (args.includeOptions !== false && experience === "work" && panel.axisRows.length > 0) {
+    if (args.includeOptions !== false
+      && (experience === "work" || experience === "chat")
+      && panel.axisRows.length > 0) {
       for (const axis of WORK_AXES) {
         if (!data.availableAxes.includes(axis)) continue;
         const options = await inspectWorkAxisOptions(env, axis);
@@ -215,6 +217,9 @@ export async function applyConfiguration(
       }
 
       const selection = before.experience === "work"
+        || (before.experience === "chat"
+          && ["model", "effort", "speed"].includes(axis)
+          && before.availableAxes.includes(axis))
         ? await selectWorkAxis(env, axis, requested)
         : await selectChatAxis(env, axis, requested, args.timeoutMs);
       if (selection === undefined) {
@@ -294,25 +299,45 @@ export function configurationInspectionFromSurface(
     }
     selectorProfile = panel.advancedVisible ? "work_advanced_v1" : "work_basic_v1";
   } else if (experience === "chat") {
-    const simplified = chatMenuLooksSimplified(menuItems);
-    selectorProfile = simplified ? "chat_simplified_v1" : detectedProfile;
-    const axis: ConfigurationAxis = simplified ? "intelligence" : "effort";
-    if (menuItems.length > 0 || panel.openerLabel !== undefined) {
-      availableAxes.push(axis);
-    }
-    if (panel.openerLabel !== undefined) {
-      active[axis] = panel.openerLabel;
-    }
-    const chatOptions = menuItems
-      .filter(item => !isConfigurationAxisRow(item.label))
-      .map(menuItemToOption);
-    if (chatOptions.length > 0) {
-      options[axis] = chatOptions;
-    }
-    const modelRows = menuItems.filter(item => /^gpt[\s-]/i.test(item.label) || item.hasPopup === true);
-    if (modelRows.length > 0) {
-      availableAxes.push("modelVersion");
-      options.modelVersion = modelRows.map(menuItemToOption);
+    const chatAxisRows = panel.axisRows.filter(row => row.axis === "model" || row.axis === "effort");
+    if (chatAxisRows.length > 0) {
+      selectorProfile = "chat_simplified_v1";
+      for (const row of chatAxisRows) {
+        if (!availableAxes.includes(row.axis)) availableAxes.push(row.axis);
+        if (row.value !== undefined && row.value.length > 0) active[row.axis] = row.value;
+      }
+    } else {
+      const projectModelRows = menuItems.filter(item => /\b(?:gpt[\s-]?\d|sol|luna|terra)\b/i.test(item.label));
+      if (isProjectComposerEvidence(evidence)
+        && projectModelRows.length === 1
+        && panel.openerLabel !== undefined) {
+        selectorProfile = "chat_simplified_v1";
+        availableAxes.push("model", "effort");
+        active.model = projectModelRows[0]!.label;
+        active.effort = panel.openerLabel;
+        options.model = projectModelRows.map(menuItemToOption);
+      } else {
+      const simplified = chatMenuLooksSimplified(menuItems);
+      selectorProfile = simplified ? "chat_simplified_v1" : detectedProfile;
+      const axis: ConfigurationAxis = simplified ? "intelligence" : "effort";
+      if (menuItems.length > 0 || panel.openerLabel !== undefined) {
+        availableAxes.push(axis);
+      }
+      if (panel.openerLabel !== undefined) {
+        active[axis] = panel.openerLabel;
+      }
+      const chatOptions = menuItems
+        .filter(item => !isConfigurationAxisRow(item.label))
+        .map(menuItemToOption);
+      if (chatOptions.length > 0) {
+        options[axis] = chatOptions;
+      }
+      const modelRows = menuItems.filter(item => /^gpt[\s-]/i.test(item.label) || item.hasPopup === true);
+      if (modelRows.length > 0) {
+        availableAxes.push("modelVersion");
+        options.modelVersion = modelRows.map(menuItemToOption);
+      }
+      }
     }
   }
 
@@ -325,6 +350,10 @@ export function configurationInspectionFromSurface(
     verified: experience !== "unknown" && (availableAxes.length > 0 || Object.keys(active).length > 0),
     evidence
   };
+}
+
+function isProjectComposerEvidence(evidence: ConfigurationInspectionData["evidence"]): boolean {
+  return evidence.some(item => item.source === "composer" && item.label === "ChatGPT Project composer");
 }
 
 async function inspectWorkAxisOptions(env: RuntimeEnv, axis: ConfigurationAxis): Promise<ConfigurationOption[]> {
@@ -681,14 +710,20 @@ async function readConfigurationPanel(page: PageLike): Promise<ConfigurationPane
   if (typeof page.evaluate !== "function") {
     return { axisRows: [], advancedVisible: false };
   }
-  return page.evaluate((axisLabels: Record<string, string[]>) => {
+  return page.evaluate((labels: {
+    axes: Record<string, string[]>;
+    openerLabels: string[];
+    effortOptionLabels: string[];
+  }) => {
     const normalize = (value: string): string => value.replace(/\s+/g, " ").trim();
     const normalizedAxes = Object.fromEntries(
-      Object.entries(axisLabels).map(([axis, labels]) => [
+      Object.entries(labels.axes).map(([axis, axisLabels]) => [
         axis,
-        labels.map(label => normalize(label).toLocaleLowerCase())
+        axisLabels.map(label => normalize(label).toLocaleLowerCase())
       ])
     );
+    const normalizedOpenerLabels = new Set(labels.openerLabels.map(label => normalize(label).toLocaleLowerCase()));
+    const normalizedEffortOptions = new Set(labels.effortOptionLabels.map(label => normalize(label).toLocaleLowerCase()));
     const visible = (element: Element): boolean => {
       const html = element as HTMLElement;
       const rect = html.getBoundingClientRect?.();
@@ -720,15 +755,27 @@ async function readConfigurationPanel(page: PageLike): Promise<ConfigurationPane
       const html = row as HTMLElement;
       const label = normalize(row.getAttribute("aria-label") ?? html.innerText ?? row.textContent ?? "");
       const normalized = label.toLocaleLowerCase();
+      const hasSubmenu = row.getAttribute("aria-haspopup") === "menu";
       for (const axis of ["model", "intelligence", "effort", "speed"] as ConfigurationAxis[]) {
         const candidates = normalizedAxes[axis] ?? [];
-        const prefix = candidates.find(candidate => normalized === candidate || normalized.startsWith(`${candidate} `));
+        const prefix = candidates
+          .filter(candidate => normalized === candidate || normalized.startsWith(`${candidate} `))
+          .sort((left, right) => right.length - left.length)[0];
         if (prefix === undefined) continue;
         const value = normalize(label.slice(prefix.length));
         const item: { axis: ConfigurationAxis; label: string; value?: string } = { axis, label };
         if (value.length > 0) item.value = value;
         axisRows.push(item);
         break;
+      }
+      if (axisRows.some(item => item.label === label)) continue;
+      // New Project menus expose each configurable row as a menuitem with a
+      // submenu. Some accessibility trees omit the human axis title, but the
+      // active value and the submenu contract remain stable.
+      if (hasSubmenu && /\b(?:gpt[\s-]?\d|sol|luna|terra)\b/i.test(label)) {
+        axisRows.push({ axis: "model", label, value: label });
+      } else if (hasSubmenu && normalizedEffortOptions.has(normalized)) {
+        axisRows.push({ axis: "effort", label, value: label });
       }
     }
 
@@ -752,8 +799,9 @@ async function readConfigurationPanel(page: PageLike): Promise<ConfigurationPane
         };
       })
       .filter(item => !/send|voice|microphone|attach|upload|add files|plus/i.test(`${item.label} ${item.testId}`))
-      .filter(item => /model-switcher|model-selector|mode-selector/i.test(item.testId)
-        || /\b(?:gpt|sol|luna|terra|instant|medium|high|extra high|pro|thinking|extended|light|standard|fast)\b/i.test(item.label));
+       .filter(item => /model-switcher|model-selector|mode-selector/i.test(item.testId)
+         || normalizedOpenerLabels.has(item.label.toLocaleLowerCase())
+         || /\b(?:gpt|sol|luna|terra|instant|medium|high|extra high|pro|thinking|extended|light|standard|fast)\b/i.test(item.label));
     const result: ConfigurationPanelSnapshot = {
       axisRows,
       advancedVisible: axisRows.length > 0
@@ -762,7 +810,21 @@ async function readConfigurationPanel(page: PageLike): Promise<ConfigurationPane
       result.openerLabel = openerCandidates[0].label;
     }
     return result;
-  }, localeLabels.configurationAxes).catch(() => ({ axisRows: [], advancedVisible: false }));
+  }, {
+    axes: localeLabels.configurationAxes,
+    openerLabels: [
+      ...Object.values(localeLabels.configurationOptions).flat(),
+      ...Object.values(localeLabels.modeOptions).flat()
+    ],
+    effortOptionLabels: [
+      ...localeLabels.configurationOptions.light,
+      ...localeLabels.configurationOptions.medium,
+      ...localeLabels.configurationOptions.high,
+      ...localeLabels.configurationOptions.extraHigh,
+      ...localeLabels.configurationOptions.max,
+      ...localeLabels.configurationOptions.ultra
+    ]
+  }).catch(() => ({ axisRows: [], advancedVisible: false }));
 }
 
 async function findWorkAxisRow(page: PageLike, axis: ConfigurationAxis): Promise<LocatorLike | undefined> {
@@ -771,6 +833,30 @@ async function findWorkAxisRow(page: PageLike, axis: ConfigurationAxis): Promise
     const pattern = new RegExp(`^${escapeRegExp(label)}(?:\\s|$)`, "i");
     for (const role of ["button", "menuitem"]) {
       const locator = page.getByRole?.(role, { name: pattern });
+      if (locator?.count !== undefined && await locator.count().catch(() => 0) === 1) {
+        return locator;
+      }
+    }
+  }
+  const panelRow = (await readConfigurationPanel(page)).axisRows
+    .filter(row => row.axis === axis);
+  if (panelRow.length === 1) {
+    for (const role of ["button", "menuitem"]) {
+      const locator = page.getByRole?.(role, { name: panelRow[0]!.label, exact: true });
+      if (locator?.count !== undefined && await locator.count().catch(() => 0) === 1) {
+        return locator;
+      }
+    }
+  }
+  const visibleItems = await enumerateVisibleMenuItems(page).catch(() => []);
+  const projectRow = visibleItems.filter(item => axis === "model"
+    ? /\b(?:gpt[\s-]?\d|sol|luna|terra)\b/i.test(item.label)
+    : axis === "effort"
+      ? workAxisOptionLabelMatches("effort", item.label)
+      : false);
+  if (projectRow.length === 1) {
+    for (const role of ["button", "menuitem"]) {
+      const locator = page.getByRole?.(role, { name: projectRow[0]!.label, exact: true });
       if (locator?.count !== undefined && await locator.count().catch(() => 0) === 1) {
         return locator;
       }

@@ -21,6 +21,7 @@ import { ensurePage } from "./session.js";
 type SurfaceSnapshot = {
   url?: string;
   composerLabels: string[];
+  hasComposerTextbox?: boolean;
   mainControls: string[];
   mainText: string;
   selectedSurfaceLabels?: string[];
@@ -194,6 +195,8 @@ export function detectExperienceFromSnapshot(snapshot: SurfaceSnapshot): DetectE
   const mainText = normalizeForLabelMatch(snapshot.mainText);
   const selectedSurfaceLabels = (snapshot.selectedSurfaceLabels ?? []).map(normalizeForLabelMatch);
   const url = (snapshot.url ?? "").toLowerCase();
+  const projectChatComposer = isProjectSurfaceUrl(url)
+    && (snapshot.hasComposerTextbox ?? snapshot.composerLabels.length > 0);
 
   const selectedWork = matchingLabels(selectedSurfaceLabels, localeLabels.experienceOptions.work);
   const selectedChat = matchingLabels(selectedSurfaceLabels, localeLabels.experienceOptions.chat);
@@ -213,6 +216,9 @@ export function detectExperienceFromSnapshot(snapshot: SurfaceSnapshot): DetectE
   const chatComposer = matchingLabels(composerLabels, localeLabels.composerTextbox);
   for (const label of chatComposer) {
     evidence.push({ source: "composer", label });
+  }
+  if (projectChatComposer) {
+    evidence.push({ source: "composer", label: "ChatGPT Project composer" });
   }
 
   const workAxisCount = (["model", "effort", "speed"] as const)
@@ -253,7 +259,8 @@ export function detectExperienceFromSnapshot(snapshot: SurfaceSnapshot): DetectE
     + (/\/work(?:\/|$|\?)/.test(url) ? 3 : 0)
     + (containsAny(mainText, ["work on something else", "work on anything"]) ? 2 : 0);
   const chatScore = chatComposer.length * 4
-    + (chatSurfaceSelected ? 10 : 0);
+    + (chatSurfaceSelected ? 10 : 0)
+    + (projectChatComposer ? 12 : 0);
 
   let experience: ChatGPTExperience = "unknown";
   let confidence: ExperienceConfidence = "low";
@@ -267,6 +274,10 @@ export function detectExperienceFromSnapshot(snapshot: SurfaceSnapshot): DetectE
 
   const selectorProfile = profileFromSnapshot(snapshot, experience);
   return { experience, selectorProfile, confidence, evidence };
+}
+
+function isProjectSurfaceUrl(url: string): boolean {
+  return /\/g\/g-p-[^/]+\/project(?:[/?#]|$)/i.test(url);
 }
 
 export async function readSurfaceSnapshot(page: PageLike): Promise<SurfaceSnapshot> {
@@ -315,8 +326,8 @@ export async function readSurfaceSnapshot(page: PageLike): Promise<SurfaceSnapsh
       root,
       ...Array.from(root.querySelectorAll("textarea, [contenteditable='true'], [role='textbox'], input"))
     ]);
-    const composerLabels = Array.from(new Set(composerNodes
-      .filter(visible)
+    const visibleComposerNodes = composerNodes.filter(visible);
+    const composerLabels = Array.from(new Set(visibleComposerNodes
       .map(labelFor)
       .map(normalize)
       .filter(Boolean)))
@@ -351,11 +362,14 @@ export async function readSurfaceSnapshot(page: PageLike): Promise<SurfaceSnapsh
       .map(normalize)
       .filter(label => wantedSurfaceLabels.has(normalizeComparable(label)))))
       .slice(0, 4);
-    return { composerLabels, mainControls, mainText, selectedSurfaceLabels };
+    const hasComposerTextbox = visibleComposerNodes.some(node => node.matches(
+      "textarea, [contenteditable='true'], [role='textbox'], input"
+    ));
+    return { composerLabels, hasComposerTextbox, mainControls, mainText, selectedSurfaceLabels };
   }, [
     ...localeLabels.experienceOptions.chat,
     ...localeLabels.experienceOptions.work,
-  ]).catch(() => ({ composerLabels: [], mainControls: [], mainText: "", selectedSurfaceLabels: [] }));
+  ]).catch(() => ({ composerLabels: [], hasComposerTextbox: false, mainControls: [], mainText: "", selectedSurfaceLabels: [] }));
 
   return { url, ...snapshot };
 }

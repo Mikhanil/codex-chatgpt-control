@@ -43,6 +43,71 @@ describe("sanitized Chat and Work surface profiles", () => {
     })).toMatchObject({ experience: "unknown", selectorProfile: "unknown", confidence: "low" });
   });
 
+  it("recognizes a Project composer as Chat without matching its dynamic project name", () => {
+    const detected = detectExperienceFromSnapshot({
+      url: "https://chatgpt.com/g/g-p-sanitized/project",
+      composerLabels: [],
+      hasComposerTextbox: true,
+      mainControls: [],
+      mainText: ""
+    });
+
+    expect(detected).toMatchObject({
+      experience: "chat",
+      selectorProfile: "chat_simplified_v1",
+      confidence: "high"
+    });
+    expect(detected.evidence).toContainEqual({
+      source: "composer",
+      label: "ChatGPT Project composer"
+    });
+  });
+
+  it("uses Project configuration axis rows for Chat model and effort", () => {
+    const inspection = configurationInspectionFromSurface(
+      "chat",
+      "chat_simplified_v1",
+      [],
+      {
+        advancedVisible: true,
+        axisRows: [
+          { axis: "model", label: "Model GPT-5.6 Sol", value: "GPT-5.6 Sol" },
+          { axis: "effort", label: "Reasoning effort Extra High", value: "Extra High" }
+        ]
+      },
+      []
+    );
+
+    expect(inspection).toMatchObject({
+      experience: "chat",
+      selectorProfile: "chat_simplified_v1",
+      availableAxes: ["model", "effort"],
+      active: { model: "GPT-5.6 Sol", effort: "Extra High" },
+      verified: true
+    });
+    expect(configurationMatchesSelection(inspection, {
+      model: "GPT-5.6 Sol",
+      effort: "Extra High"
+    })).toBe(true);
+  });
+
+  it("uses Project control values when accessibility omits axis titles", () => {
+    const inspection = configurationInspectionFromSurface(
+      "chat",
+      "chat_simplified_v1",
+      [{ source: "composer", label: "ChatGPT Project composer" }],
+      { advancedVisible: false, openerLabel: "Extra High", axisRows: [] },
+      [{ label: "GPT-5.6 Sol", normalized: "gpt 5.6 sol", hasPopup: true }]
+    );
+
+    expect(inspection.active).toEqual({ model: "GPT-5.6 Sol", effort: "Extra High" });
+    expect(inspection.availableAxes).toEqual(["model", "effort"]);
+    expect(configurationMatchesSelection(inspection, {
+      model: "GPT-5.6 Sol",
+      effort: "Extra High"
+    })).toBe(true);
+  });
+
   for (const fixtureName of fixtureNames) {
     it(`detects and inspects ${fixtureName}`, async () => {
       const fixture = await readSurfaceFixture(fixtureName);

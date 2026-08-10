@@ -11,7 +11,7 @@ import type { LocaleContribution } from "./types.js";
 export const ru = {
   configurationAxes: {
     model: ["Модель"],
-    effort: ["Уровень"],
+    effort: ["Уровень проработки", "Уровень"],
     speed: ["Скорость"],
   },
   configurationOptions: {
