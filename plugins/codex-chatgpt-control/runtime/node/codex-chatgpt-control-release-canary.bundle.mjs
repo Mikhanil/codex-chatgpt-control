@@ -4741,7 +4741,7 @@ function detectExperienceFromSnapshot(snapshot) {
   const controls = snapshot.mainControls.map(normalizeForLabelMatch);
   const mainText = normalizeForLabelMatch(snapshot.mainText);
   const selectedSurfaceLabels = (snapshot.selectedSurfaceLabels ?? []).map(normalizeForLabelMatch);
-  const url = snapshot.url.toLowerCase();
+  const url = (snapshot.url ?? "").toLowerCase();
   const selectedWork = matchingLabels(selectedSurfaceLabels, localeLabels.experienceOptions.work);
   const selectedChat = matchingLabels(selectedSurfaceLabels, localeLabels.experienceOptions.chat);
   const workSurfaceSelected = selectedWork.length > 0 && selectedChat.length === 0;
@@ -4777,7 +4777,7 @@ function detectExperienceFromSnapshot(snapshot) {
     evidence.push({ source: "control", label: "Work configuration opener" });
   }
   if (/\/work(?:\/|$|\?)/.test(url)) {
-    evidence.push({ source: "url", label: snapshot.url });
+    evidence.push({ source: "url", label: snapshot.url ?? CHATGPT_HOME2 });
   }
   if (containsAny(mainText, ["work on something else", "work on anything"])) {
     evidence.push({ source: "heading", label: "Work composer copy" });
@@ -6589,7 +6589,7 @@ function buildSurfaceProfileDraft(options, locale, snapshot, detected, inspectio
     workspaceScope: options.workspaceScope,
     supportState: options.supportState,
     snapshot: {
-      url: sanitizeChatGPTUrl(snapshot.url),
+      url: sanitizeChatGPTUrl(snapshot.url ?? ""),
       composerLabels: safeComposerLabels,
       mainControls: safeMainControls,
       mainText: detected.evidence.filter((item) => item.source === "heading").map((item) => item.label).join(" ").slice(0, 2e3)
@@ -11277,6 +11277,58 @@ function mergeResponseMetadata(data, latest) {
   if (latest.sourcesAvailable !== void 0) data.sourcesAvailable = latest.sourcesAvailable;
 }
 
+// src/commands/project-select.ts
+async function selectProject(env, args) {
+  let project;
+  try {
+    project = normalizeProjectSourcesUrl(args.projectUrl);
+  } catch (error) {
+    return resultError(error instanceof Error ? error : new Error(String(error)), { timestamp: (/* @__PURE__ */ new Date()).toISOString() });
+  }
+  const boot2 = await ensurePage(env);
+  if (!boot2.ok) return boot2;
+  const page = env.page;
+  if (page.goto === void 0 || page.url === void 0) {
+    return {
+      ok: false,
+      status: "unsupported",
+      warnings: [],
+      blocker: {
+        kind: "selector_drift",
+        code: "project_navigation_unavailable",
+        fieldPath: "projectUrl",
+        message: "The visible browser cannot open and verify a ChatGPT Project URL.",
+        resumable: true
+      },
+      context: await contextFromPage(page)
+    };
+  }
+  try {
+    await page.goto(project.url, { waitUntil: "domcontentloaded", timeout: args.timeoutMs ?? 3e4 });
+    await page.waitForTimeout?.(500);
+    const actual = await Promise.resolve(page.url()).catch(() => "");
+    if (!actual.includes(`/g/${project.projectId}/`)) {
+      return {
+        ok: false,
+        status: "blocked",
+        warnings: [],
+        blocker: {
+          kind: "selector_drift",
+          code: "project_postcondition_unverified",
+          fieldPath: "projectUrl",
+          message: "ChatGPT did not confirm the requested Project URL after navigation.",
+          candidates: [{ label: actual }],
+          resumable: true
+        },
+        context: await contextFromPage(page)
+      };
+    }
+    return resultOk({ ...project, url: actual }, await contextFromPage(page));
+  } catch (error) {
+    return resultError(error instanceof Error ? error : new Error(String(error)), await contextFromPage(page));
+  }
+}
+
 // src/commands/work.ts
 var NEW_WORK_LABELS = localeLabels.newWork;
 async function startWork(env, args) {
@@ -11302,6 +11354,15 @@ async function startWork(env, args) {
   }
   const page = env.page;
   try {
+    if (args.projectUrl !== void 0) {
+      const project = await selectProject(env, {
+        projectUrl: args.projectUrl,
+        ...args.timeoutMs === void 0 ? {} : { timeoutMs: args.timeoutMs }
+      });
+      if (!project.ok) {
+        return forwardCommandFailure(project);
+      }
+    }
     const surface = await openExperience(env, {
       experience: "work",
       ...args.timeoutMs === void 0 ? {} : { timeoutMs: args.timeoutMs }
@@ -13568,6 +13629,7 @@ function createChatGPT(options = {}) {
       downloadLatest: (args) => downloadLatestFile(env, args)
     },
     projects: {
+      select: (args) => selectProject(env, args),
       sources: {
         list: (args) => listProjectSources(env, args),
         planAdd: (args) => buildProjectSourceAddPlan(env, args),
