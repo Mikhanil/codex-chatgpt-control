@@ -838,7 +838,11 @@ async function readAccessibleConfigurationPanel(page: PageLike): Promise<Configu
         name: new RegExp(`^${escapeRegExp(axisLabel)}(?:\\s|$)`, "i")
       });
       if (locator?.count === undefined || await locator.count().catch(() => 0) !== 1) continue;
-      const label = await locator.innerText?.().catch(() => "");
+      // Project configuration is rendered in a portal. The locator resolves
+      // through the accessibility tree, while innerText may be absent on the
+      // bridge wrapper; textContent is the portable public Playwright read.
+      const label = await locator.textContent?.().catch(() => undefined)
+        ?? await locator.innerText?.().catch(() => undefined);
       if (label === undefined || label.trim().length === 0) continue;
       const normalized = label.replace(/\s+/g, " ").trim();
       const value = normalized.slice(axisLabel.length).trim();
