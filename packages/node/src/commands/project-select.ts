@@ -39,7 +39,7 @@ export async function selectProject(
   }
 
   try {
-    await page.goto(project.url, { waitUntil: "domcontentloaded", timeout: args.timeoutMs ?? 30000 });
+    await page.goto(project.url, { waitUntil: "domcontentloaded", timeout: args.timeoutMs ?? 30000 }).catch(() => undefined);
     await page.waitForTimeout?.(500);
     const actual = await Promise.resolve(page.url()).catch(() => "");
     if (!actual.includes(`/g/${project.projectId}/`)) {
