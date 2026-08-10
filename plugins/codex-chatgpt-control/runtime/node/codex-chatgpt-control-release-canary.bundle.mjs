@@ -6271,7 +6271,7 @@ async function readAccessibleConfigurationPanel(page) {
         name: new RegExp(`^${escapeRegExp3(axisLabel)}(?:\\s|$)`, "i")
       });
       if (locator?.count === void 0 || await locator.count().catch(() => 0) !== 1) continue;
-      const label = await locator.innerText?.().catch(() => "");
+      const label = await locator.textContent?.().catch(() => void 0) ?? await locator.innerText?.().catch(() => void 0);
       if (label === void 0 || label.trim().length === 0) continue;
       const normalized = label.replace(/\s+/g, " ").trim();
       const value = normalized.slice(axisLabel.length).trim();
