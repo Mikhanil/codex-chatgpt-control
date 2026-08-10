@@ -10440,9 +10440,9 @@ async function ensureWorkAdvancedPanel(page) {
 }
 async function readConfigurationPanel(page) {
   if (typeof page.evaluate !== "function") {
-    return { axisRows: [], advancedVisible: false };
+    return readAccessibleConfigurationPanel(page);
   }
-  return page.evaluate((labels) => {
+  const domPanel = await page.evaluate((labels) => {
     const normalize = (value) => value.replace(/\s+/g, " ").trim();
     const normalizedAxes = Object.fromEntries(
       Object.entries(labels.axes).map(([axis, axisLabels]) => [
@@ -10539,6 +10539,38 @@ async function readConfigurationPanel(page) {
       ...localeLabels.configurationOptions.ultra
     ]
   }).catch(() => ({ axisRows: [], advancedVisible: false }));
+  return mergeConfigurationPanels(domPanel, await readAccessibleConfigurationPanel(page));
+}
+async function readAccessibleConfigurationPanel(page) {
+  const axisRows = [];
+  for (const axis of ["model", "effort", "speed"]) {
+    const labels = localeLabels.configurationAxes[axis] ?? [];
+    const candidates = [...labels].sort((left, right) => right.length - left.length);
+    for (const axisLabel of candidates) {
+      const locator = page.getByRole?.("menuitem", {
+        name: new RegExp(`^${escapeRegExp3(axisLabel)}(?:\\s|$)`, "i")
+      });
+      if (locator?.count === void 0 || await locator.count().catch(() => 0) !== 1) continue;
+      const label = await locator.innerText?.().catch(() => "");
+      if (label === void 0 || label.trim().length === 0) continue;
+      const normalized = label.replace(/\s+/g, " ").trim();
+      const value = normalized.slice(axisLabel.length).trim();
+      axisRows.push(value.length === 0 ? { axis, label: normalized } : { axis, label: normalized, value });
+      break;
+    }
+  }
+  return { axisRows, advancedVisible: axisRows.length > 0 };
+}
+function mergeConfigurationPanels(domPanel, accessiblePanel) {
+  const axisRows = [...domPanel.axisRows];
+  for (const row of accessiblePanel.axisRows) {
+    if (!axisRows.some((existing) => existing.axis === row.axis)) axisRows.push(row);
+  }
+  return {
+    ...domPanel,
+    axisRows,
+    advancedVisible: domPanel.advancedVisible || accessiblePanel.advancedVisible
+  };
 }
 async function findWorkAxisRow(page, axis) {
   const labels = axis === "modelVersion" ? [] : localeLabels.configurationAxes[axis] ?? [];

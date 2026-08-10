@@ -5856,23 +5856,32 @@ function configurationInspectionFromSurface(experience, detectedProfile, evidenc
         if (row.value !== void 0 && row.value.length > 0) active[row.axis] = row.value;
       }
     } else {
-      const simplified = chatMenuLooksSimplified(menuItems);
-      selectorProfile = simplified ? "chat_simplified_v1" : detectedProfile;
-      const axis = simplified ? "intelligence" : "effort";
-      if (menuItems.length > 0 || panel.openerLabel !== void 0) {
-        availableAxes.push(axis);
-      }
-      if (panel.openerLabel !== void 0) {
-        active[axis] = panel.openerLabel;
-      }
-      const chatOptions = menuItems.filter((item) => !isConfigurationAxisRow(item.label)).map(menuItemToOption);
-      if (chatOptions.length > 0) {
-        options[axis] = chatOptions;
-      }
-      const modelRows = menuItems.filter((item) => /^gpt[\s-]/i.test(item.label) || item.hasPopup === true);
-      if (modelRows.length > 0) {
-        availableAxes.push("modelVersion");
-        options.modelVersion = modelRows.map(menuItemToOption);
+      const projectModelRows = menuItems.filter((item) => /\b(?:gpt[\s-]?\d|sol|luna|terra)\b/i.test(item.label));
+      if (isProjectComposerEvidence(evidence) && projectModelRows.length === 1 && panel.openerLabel !== void 0) {
+        selectorProfile = "chat_simplified_v1";
+        availableAxes.push("model", "effort");
+        active.model = projectModelRows[0].label;
+        active.effort = panel.openerLabel;
+        options.model = projectModelRows.map(menuItemToOption);
+      } else {
+        const simplified = chatMenuLooksSimplified(menuItems);
+        selectorProfile = simplified ? "chat_simplified_v1" : detectedProfile;
+        const axis = simplified ? "intelligence" : "effort";
+        if (menuItems.length > 0 || panel.openerLabel !== void 0) {
+          availableAxes.push(axis);
+        }
+        if (panel.openerLabel !== void 0) {
+          active[axis] = panel.openerLabel;
+        }
+        const chatOptions = menuItems.filter((item) => !isConfigurationAxisRow(item.label)).map(menuItemToOption);
+        if (chatOptions.length > 0) {
+          options[axis] = chatOptions;
+        }
+        const modelRows = menuItems.filter((item) => /^gpt[\s-]/i.test(item.label) || item.hasPopup === true);
+        if (modelRows.length > 0) {
+          availableAxes.push("modelVersion");
+          options.modelVersion = modelRows.map(menuItemToOption);
+        }
       }
     }
   }
@@ -5885,6 +5894,9 @@ function configurationInspectionFromSurface(experience, detectedProfile, evidenc
     verified: experience !== "unknown" && (availableAxes.length > 0 || Object.keys(active).length > 0),
     evidence
   };
+}
+function isProjectComposerEvidence(evidence) {
+  return evidence.some((item) => item.source === "composer" && item.label === "ChatGPT Project composer");
 }
 async function inspectWorkAxisOptions(env, axis) {
   const page = env.page;
@@ -6148,9 +6160,9 @@ async function ensureWorkAdvancedPanel(page) {
 }
 async function readConfigurationPanel(page) {
   if (typeof page.evaluate !== "function") {
-    return { axisRows: [], advancedVisible: false };
+    return readAccessibleConfigurationPanel(page);
   }
-  return page.evaluate((labels) => {
+  const domPanel = await page.evaluate((labels) => {
     const normalize2 = (value) => value.replace(/\s+/g, " ").trim();
     const normalizedAxes = Object.fromEntries(
       Object.entries(labels.axes).map(([axis, axisLabels]) => [
@@ -6247,6 +6259,38 @@ async function readConfigurationPanel(page) {
       ...localeLabels.configurationOptions.ultra
     ]
   }).catch(() => ({ axisRows: [], advancedVisible: false }));
+  return mergeConfigurationPanels(domPanel, await readAccessibleConfigurationPanel(page));
+}
+async function readAccessibleConfigurationPanel(page) {
+  const axisRows = [];
+  for (const axis of ["model", "effort", "speed"]) {
+    const labels = localeLabels.configurationAxes[axis] ?? [];
+    const candidates = [...labels].sort((left, right) => right.length - left.length);
+    for (const axisLabel of candidates) {
+      const locator = page.getByRole?.("menuitem", {
+        name: new RegExp(`^${escapeRegExp3(axisLabel)}(?:\\s|$)`, "i")
+      });
+      if (locator?.count === void 0 || await locator.count().catch(() => 0) !== 1) continue;
+      const label = await locator.innerText?.().catch(() => "");
+      if (label === void 0 || label.trim().length === 0) continue;
+      const normalized = label.replace(/\s+/g, " ").trim();
+      const value = normalized.slice(axisLabel.length).trim();
+      axisRows.push(value.length === 0 ? { axis, label: normalized } : { axis, label: normalized, value });
+      break;
+    }
+  }
+  return { axisRows, advancedVisible: axisRows.length > 0 };
+}
+function mergeConfigurationPanels(domPanel, accessiblePanel) {
+  const axisRows = [...domPanel.axisRows];
+  for (const row of accessiblePanel.axisRows) {
+    if (!axisRows.some((existing) => existing.axis === row.axis)) axisRows.push(row);
+  }
+  return {
+    ...domPanel,
+    axisRows,
+    advancedVisible: domPanel.advancedVisible || accessiblePanel.advancedVisible
+  };
 }
 async function findWorkAxisRow(page, axis) {
   const labels = axis === "modelVersion" ? [] : localeLabels.configurationAxes[axis] ?? [];
@@ -6263,6 +6307,16 @@ async function findWorkAxisRow(page, axis) {
   if (panelRow.length === 1) {
     for (const role of ["button", "menuitem"]) {
       const locator = page.getByRole?.(role, { name: panelRow[0].label, exact: true });
+      if (locator?.count !== void 0 && await locator.count().catch(() => 0) === 1) {
+        return locator;
+      }
+    }
+  }
+  const visibleItems = await enumerateVisibleMenuItems(page).catch(() => []);
+  const projectRow = visibleItems.filter((item) => axis === "model" ? /\b(?:gpt[\s-]?\d|sol|luna|terra)\b/i.test(item.label) : axis === "effort" ? workAxisOptionLabelMatches("effort", item.label) : false);
+  if (projectRow.length === 1) {
+    for (const role of ["button", "menuitem"]) {
+      const locator = page.getByRole?.(role, { name: projectRow[0].label, exact: true });
       if (locator?.count !== void 0 && await locator.count().catch(() => 0) === 1) {
         return locator;
       }

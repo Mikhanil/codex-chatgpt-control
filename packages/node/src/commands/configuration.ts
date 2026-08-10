@@ -708,9 +708,9 @@ async function ensureWorkAdvancedPanel(page: PageLike): Promise<boolean> {
 
 async function readConfigurationPanel(page: PageLike): Promise<ConfigurationPanelSnapshot> {
   if (typeof page.evaluate !== "function") {
-    return { axisRows: [], advancedVisible: false };
+    return readAccessibleConfigurationPanel(page);
   }
-  return page.evaluate((labels: {
+  const domPanel = await page.evaluate((labels: {
     axes: Record<string, string[]>;
     openerLabels: string[];
     effortOptionLabels: string[];
@@ -825,6 +825,43 @@ async function readConfigurationPanel(page: PageLike): Promise<ConfigurationPane
       ...localeLabels.configurationOptions.ultra
     ]
   }).catch(() => ({ axisRows: [], advancedVisible: false }));
+  return mergeConfigurationPanels(domPanel, await readAccessibleConfigurationPanel(page));
+}
+
+async function readAccessibleConfigurationPanel(page: PageLike): Promise<ConfigurationPanelSnapshot> {
+  const axisRows: ConfigurationPanelSnapshot["axisRows"] = [];
+  for (const axis of ["model", "effort", "speed"] as ConfigurationAxis[]) {
+    const labels = localeLabels.configurationAxes[axis as keyof typeof localeLabels.configurationAxes] ?? [];
+    const candidates = [...labels].sort((left, right) => right.length - left.length);
+    for (const axisLabel of candidates) {
+      const locator = page.getByRole?.("menuitem", {
+        name: new RegExp(`^${escapeRegExp(axisLabel)}(?:\\s|$)`, "i")
+      });
+      if (locator?.count === undefined || await locator.count().catch(() => 0) !== 1) continue;
+      const label = await locator.innerText?.().catch(() => "");
+      if (label === undefined || label.trim().length === 0) continue;
+      const normalized = label.replace(/\s+/g, " ").trim();
+      const value = normalized.slice(axisLabel.length).trim();
+      axisRows.push(value.length === 0 ? { axis, label: normalized } : { axis, label: normalized, value });
+      break;
+    }
+  }
+  return { axisRows, advancedVisible: axisRows.length > 0 };
+}
+
+function mergeConfigurationPanels(
+  domPanel: ConfigurationPanelSnapshot,
+  accessiblePanel: ConfigurationPanelSnapshot
+): ConfigurationPanelSnapshot {
+  const axisRows = [...domPanel.axisRows];
+  for (const row of accessiblePanel.axisRows) {
+    if (!axisRows.some(existing => existing.axis === row.axis)) axisRows.push(row);
+  }
+  return {
+    ...domPanel,
+    axisRows,
+    advancedVisible: domPanel.advancedVisible || accessiblePanel.advancedVisible
+  };
 }
 
 async function findWorkAxisRow(page: PageLike, axis: ConfigurationAxis): Promise<LocatorLike | undefined> {
